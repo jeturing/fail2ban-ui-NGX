@@ -1,0 +1,2 @@
+Flask>=2.2,<4
+sentry-sdk[flask]>=1.39,<3

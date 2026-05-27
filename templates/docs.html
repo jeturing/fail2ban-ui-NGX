@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>API - {{ config.app_name }}</title>
+  <style>
+    :root { color-scheme: dark; --bg:#101418; --panel:#171d23; --line:#2d3844; --text:#e8eef5; --muted:#93a3b5; --blue:#71b7ff; }
+    body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif; }
+    main { max-width:1050px; margin:0 auto; padding:24px; }
+    header { display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:18px; }
+    h1 { margin:0; font-size:24px; } h2 { margin:20px 0 10px; font-size:17px; }
+    .btn { border:1px solid var(--line); background:#1f2730; color:var(--text); padding:9px 12px; border-radius:6px; text-decoration:none; }
+    .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:16px; margin-bottom:12px; }
+    code, pre { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+    pre { overflow:auto; background:#0d1116; border:1px solid var(--line); border-radius:8px; padding:14px; }
+    .method { color:var(--blue); font-weight:700; }
+    .muted { color:var(--muted); }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>API local</h1>
+        <div class="muted">Protegida con Basic Auth. Swagger renderizado localmente, sin CDN.</div>
+      </div>
+      <a class="btn" href="/">Volver</a>
+    </header>
+
+    {% for path, methods in spec.paths.items() %}
+      {% for method, detail in methods.items() %}
+      <section class="card">
+        <div><span class="method">{{ method|upper }}</span> <code>{{ path }}</code></div>
+        <p class="muted">{{ detail.summary }}</p>
+      </section>
+      {% endfor %}
+    {% endfor %}
+
+    <h2>OpenAPI JSON</h2>
+    <pre>{{ spec|tojson(indent=2) }}</pre>
+  </main>
+</body>
+</html>

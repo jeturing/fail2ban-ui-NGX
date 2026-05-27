@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{{ data.app.name }} - {{ data.server.name }}</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #101418;
+      --panel: #171d23;
+      --panel-2: #1f2730;
+      --line: #2d3844;
+      --text: #e8eef5;
+      --muted: #93a3b5;
+      --red: #ff6b6b;
+      --amber: #f4bf50;
+      --green: #62d394;
+      --blue: #71b7ff;
+      --violet: #c69cff;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, Segoe UI, sans-serif; }
+    a { color: inherit; }
+    .shell { max-width: 1360px; margin: 0 auto; padding: 22px; }
+    .topbar { display: flex; justify-content: space-between; gap: 18px; align-items: center; margin-bottom: 18px; }
+    .brand h1 { margin: 0; font-size: 24px; letter-spacing: 0; }
+    .brand p { margin: 4px 0 0; color: var(--muted); }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+    .btn { border: 1px solid var(--line); background: var(--panel-2); color: var(--text); padding: 9px 12px; border-radius: 6px; cursor: pointer; text-decoration: none; }
+    .btn:hover { border-color: var(--blue); }
+    .grid { display: grid; gap: 14px; }
+    .metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 14px; }
+    .two { grid-template-columns: minmax(0, 1.2fr) minmax(360px, .8fr); }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; }
+    .card h2, .card h3 { margin: 0 0 12px; font-size: 16px; }
+    .metric .value { font-size: 34px; font-weight: 800; }
+    .metric .label { color: var(--muted); }
+    .red { color: var(--red); } .amber { color: var(--amber); } .green { color: var(--green); } .blue { color: var(--blue); }
+    .badge { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px; padding: 3px 8px; color: var(--muted); font-size: 12px; }
+    .badge.danger { color: #ffc9c9; border-color: #7f3030; background: #2a1618; }
+    .badge.warn { color: #ffe1a6; border-color: #7a5c20; background: #2b2415; }
+    .badge.ok { color: #bdf4d5; border-color: #2c6844; background: #13241b; }
+    .section-title { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 12px; }
+    .jail { display: grid; grid-template-columns: minmax(180px, .8fr) minmax(0, 1.2fr); gap: 12px; align-items: start; }
+    .jail + .jail { border-top: 1px solid var(--line); padding-top: 14px; margin-top: 14px; }
+    .jail-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .jail-title strong { font-size: 16px; }
+    .jail-desc { margin: 6px 0 0; color: var(--muted); }
+    .stats-row { display: flex; gap: 14px; flex-wrap: wrap; color: var(--muted); }
+    .chip-row { display: flex; gap: 7px; flex-wrap: wrap; margin-top: 10px; }
+    .chip { display: inline-flex; gap: 6px; align-items: center; border: 1px solid var(--line); background: #11161b; border-radius: 6px; padding: 4px 8px; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .chip button { border: 0; background: #5f1d25; color: white; border-radius: 4px; padding: 1px 6px; cursor: pointer; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border-bottom: 1px solid var(--line); padding: 9px 8px; text-align: left; vertical-align: top; }
+    th { color: var(--muted); font-size: 12px; text-transform: uppercase; }
+    tbody tr:hover { background: #1b232b; }
+    input { width: 100%; background: #11161b; border: 1px solid var(--line); color: var(--text); border-radius: 6px; padding: 9px 10px; }
+    .toolbar { display: flex; gap: 8px; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+    .toolbar input { max-width: 320px; }
+    .port-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
+    .port { border: 1px solid var(--line); background: #11161b; border-radius: 7px; padding: 10px; }
+    .port.public { border-color: #7f3030; } .port.tailscale { border-color: #2c6844; } .port.interna { border-color: #2f5682; }
+    .port strong { font-size: 20px; }
+    .muted { color: var(--muted); }
+    .empty { color: var(--muted); font-style: italic; }
+    .pagination { display: flex; justify-content: space-between; gap: 10px; align-items: center; margin-top: 12px; }
+    .page-btn { border: 1px solid var(--line); background: var(--panel-2); color: var(--text); border-radius: 5px; padding: 6px 9px; cursor: pointer; }
+    .page-btn.active { border-color: var(--blue); background: #18314a; }
+    .decision { border-left: 3px solid var(--amber); padding-left: 10px; }
+    .decision.critical { border-color: var(--red); }
+    .wl-form { display: flex; gap: 8px; margin-bottom: 10px; }
+    .hidden { display: none; }
+    @media (max-width: 860px) {
+      .shell { padding: 14px; }
+      .topbar, .section-title, .toolbar { align-items: stretch; flex-direction: column; }
+      .metrics, .two { grid-template-columns: 1fr; }
+      .jail { grid-template-columns: 1fr; }
+      .actions { justify-content: flex-start; }
+      th:nth-child(4), td:nth-child(4), th:nth-child(7), td:nth-child(7) { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <h1>{{ data.app.name }}</h1>
+        <p>{{ data.server.name }} · actualizado {{ data.updated }}</p>
+      </div>
+      <nav class="actions">
+        {% if data.features.swagger_enabled %}<a class="btn" href="/api/docs">API</a>{% endif %}
+        <a class="btn" href="/settings">Ajustes</a>
+        <button class="btn" onclick="location.reload()">Actualizar</button>
+      </nav>
+    </header>
+
+    <section class="grid metrics">
+      <article class="card metric"><div class="value red">{{ data.summary.total_banned }}</div><div class="label">baneadas ahora</div></article>
+      <article class="card metric"><div class="value amber">{{ data.summary.total_failed }}</div><div class="label">fallos activos</div></article>
+      <article class="card metric"><div class="value blue">{{ data.summary.unique_ips }}</div><div class="label">IPs unicas</div></article>
+      <article class="card metric"><div class="value green">{{ data.decisions|length }}</div><div class="label">decisiones</div></article>
+    </section>
+
+    <section class="grid two">
+      <article class="card">
+        <div class="section-title">
+          <h2>Jails</h2>
+          <span class="badge {% if data.features.write_actions %}ok{% else %}warn{% endif %}">
+            acciones {{ 'activas' if data.features.write_actions else 'solo lectura' }}
+          </span>
+        </div>
+        {% for jail in data.jails %}
+        <div class="jail">
+          <div>
+            <div class="jail-title">
+              <strong>{{ jail.meta.title }}</strong>
+              <span class="badge {% if jail.meta.tone in ['danger','critical'] %}danger{% elif jail.meta.tone == 'warning' %}warn{% else %}ok{% endif %}">{{ jail.meta.policy }}</span>
+              {% if not jail.enabled %}<span class="badge warn">no encontrado</span>{% endif %}
+            </div>
+            <p class="jail-desc">{{ jail.meta.description }}</p>
+          </div>
+          <div>
+            <div class="stats-row">
+              <span>fallidos <strong class="amber">{{ jail.currently_failed }}</strong></span>
+              <span>baneadas <strong class="red">{{ jail.currently_banned }}</strong></span>
+              <span>historico <strong>{{ jail.total_banned }}</strong></span>
+            </div>
+            {% if jail.banned_ips_geo %}
+            <div class="chip-row">
+              {% for ip in jail.banned_ips_geo %}
+              <span class="chip" title="{{ ip.org }}">{{ ip.display_ip }}
+                {% if data.features.write_actions %}<button onclick="unban('{{ ip.ip }}')">x</button>{% endif %}
+              </span>
+              {% endfor %}
+            </div>
+            {% else %}
+            <p class="empty">Sin IPs baneadas actualmente.</p>
+            {% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      </article>
+
+      <aside class="card">
+        <div class="section-title">
+          <h2>Decisiones y Notch</h2>
+          <span class="badge {% if config.notch.enabled %}ok{% else %}warn{% endif %}">Notch {{ 'activo' if config.notch.enabled else 'apagado' }}</span>
+        </div>
+        {% if data.decisions %}
+          {% for item in data.decisions %}
+          <div class="decision {{ item.severity }}">
+            <strong>{{ item.display_ip }}</strong>
+            <div class="muted">{{ item.reason }} · {{ item.action }} · {{ item.action_result }}</div>
+          </div>
+          {% endfor %}
+        {% else %}
+          <p class="empty">No hay decisiones pendientes con las reglas actuales.</p>
+        {% endif %}
+      </aside>
+    </section>
+
+    <section class="grid two" style="margin-top:14px">
+      <article class="card">
+        <div class="section-title">
+          <h2>Intentos recientes</h2>
+          <span class="badge">{{ data.recent_attempts|length }} registros</span>
+        </div>
+        <div class="toolbar">
+          <input id="filter-input" placeholder="Filtrar por IP, puerto o tipo" oninput="filterTable()">
+          <span class="muted" id="page-info"></span>
+        </div>
+        <div style="overflow:auto">
+          <table>
+            <thead><tr><th>Hora</th><th>IP</th><th>Puerto</th><th>Tipo</th><th>Estado</th><th>Detalle</th></tr></thead>
+            <tbody id="attempts-body">
+              {% for item in data.recent_attempts %}
+              <tr data-text="{{ item.display_ip }} {{ item.target_port }} {{ item.kind }} {{ item.detail }}">
+                <td class="muted">{{ item.at }}</td>
+                <td><span class="chip">{{ item.display_ip }}</span></td>
+                <td>{{ item.target_port }}/{{ item.protocol }}</td>
+                <td>{{ item.kind }}</td>
+                <td>{% if item.malicious %}<span class="badge danger">maliciosa</span>{% else %}<span class="badge ok">observada</span>{% endif %}</td>
+                <td class="muted">{{ item.detail }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div class="pagination"><span id="count-label" class="muted"></span><div id="pagination-controls"></div></div>
+      </article>
+
+      <aside class="card">
+        <h2>Puertos escuchando</h2>
+        {% if data.listening_ports %}
+        <div class="port-grid">
+          {% for item in data.listening_ports %}
+          <div class="port {{ item.exposure }}">
+            <strong>:{{ item.port }}</strong>
+            <div class="muted">{{ item.exposure }}</div>
+            <div class="muted">{{ item.host }}</div>
+            <div>{{ item.process[:70] }}</div>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <p class="empty">Inventario de puertos apagado.</p>
+        {% endif %}
+      </aside>
+    </section>
+
+    <section class="grid two" style="margin-top:14px">
+      <article class="card">
+        <h2>Puertos mas intentados</h2>
+        {% if data.top_ports %}
+        <div class="port-grid">
+          {% for item in data.top_ports %}
+          <div class="port"><strong>{{ item.port }}</strong><div class="muted">{{ item.hits }} intentos</div></div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <p class="empty">Sin datos recientes.</p>
+        {% endif %}
+      </article>
+
+      <aside class="card">
+        <div class="section-title">
+          <h2>Whitelist</h2>
+          {% if data.features.write_actions %}<button class="btn" onclick="toggleWlForm()">Agregar</button>{% endif %}
+        </div>
+        {% if data.features.write_actions %}
+        <div id="wl-form" class="wl-form hidden">
+          <input id="wl-input" placeholder="192.168.1.0/24 o 1.2.3.4">
+          <button class="btn" onclick="addWhitelist()">Guardar</button>
+        </div>
+        <p id="wl-error" class="red hidden"></p>
+        {% endif %}
+        <div id="wl-list" class="chip-row">
+          {% for ip in data.whitelist %}
+          <span class="chip" data-entry="{{ ip }}">{{ ip }}
+            {% if data.features.write_actions and ip not in data.protected_whitelist %}
+            <button onclick="removeWhitelist('{{ ip }}')">x</button>
+            {% endif %}
+          </span>
+          {% endfor %}
+        </div>
+      </aside>
+    </section>
+  </main>
+
+  <script>
+    const PAGE_SIZE = {{ data.ui.page_size }};
+    const AUTO_REFRESH = {{ data.ui.auto_refresh_seconds }};
+    const ALL_ROWS = Array.from(document.querySelectorAll('#attempts-body tr'));
+    let currentPage = 1;
+    let visibleRows = ALL_ROWS;
+
+    function renderPage(page) {
+      currentPage = page;
+      const start = (page - 1) * PAGE_SIZE;
+      const end = start + PAGE_SIZE;
+      ALL_ROWS.forEach(row => row.style.display = 'none');
+      visibleRows.slice(start, end).forEach(row => row.style.display = '');
+      renderPagination();
+    }
+    function renderPagination() {
+      const total = visibleRows.length;
+      const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+      const ctrl = document.getElementById('pagination-controls');
+      document.getElementById('page-info').textContent = total ? `Mostrando ${Math.min((currentPage - 1) * PAGE_SIZE + 1, total)}-${Math.min(currentPage * PAGE_SIZE, total)} de ${total}` : 'Sin registros';
+      document.getElementById('count-label').textContent = `${total} registros`;
+      ctrl.innerHTML = '';
+      for (let p = Math.max(1, currentPage - 2); p <= Math.min(pages, currentPage + 2); p++) {
+        const btn = document.createElement('button');
+        btn.className = 'page-btn' + (p === currentPage ? ' active' : '');
+        btn.textContent = p;
+        btn.onclick = () => renderPage(p);
+        ctrl.appendChild(btn);
+      }
+    }
+    function filterTable() {
+      const q = document.getElementById('filter-input').value.toLowerCase();
+      visibleRows = ALL_ROWS.filter(row => row.dataset.text.toLowerCase().includes(q));
+      renderPage(1);
+    }
+    async function unban(ip) {
+      if (!confirm(`Desbanear ${ip}?`)) return;
+      const response = await fetch(`/api/unban/${ip}`, {method: 'POST'});
+      const data = await response.json();
+      if (data.ok) location.reload(); else alert(data.error || 'Error');
+    }
+    function toggleWlForm() {
+      document.getElementById('wl-form').classList.toggle('hidden');
+    }
+    async function addWhitelist() {
+      const input = document.getElementById('wl-input');
+      const response = await fetch('/api/whitelist/add', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({entry: input.value.trim()})
+      });
+      const data = await response.json();
+      if (data.ok) location.reload();
+      else {
+        const err = document.getElementById('wl-error');
+        err.textContent = data.error || 'Error';
+        err.classList.remove('hidden');
+      }
+    }
+    async function removeWhitelist(entry) {
+      if (!confirm(`Eliminar ${entry}?`)) return;
+      const response = await fetch('/api/whitelist/remove', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({entry})
+      });
+      const data = await response.json();
+      if (data.ok) location.reload(); else alert(data.error || 'Error');
+    }
+    renderPage(1);
+    if (AUTO_REFRESH > 0) window.setTimeout(() => location.reload(), AUTO_REFRESH * 1000);
+  </script>
+</body>
+</html>
