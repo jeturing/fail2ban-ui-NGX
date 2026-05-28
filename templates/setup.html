@@ -171,6 +171,34 @@
           <label>Jail de accion automatica</label>
           <input name="decision_action_jail" value="{{ d.action_jail }}">
         </section>
+
+        <section>
+          <h2>API Keys — Enriquecimiento externo</h2>
+          <p style="font-size:.85rem;color:var(--muted,#888);margin-bottom:1rem;">
+            Solo se usan si <strong>Enriquecimiento externo</strong> esta activado.
+            Las claves se guardan en <code>{{ config.get('config_path', '/etc/fail2ban-ui/config.json') }}</code> con permisos 600.
+          </p>
+          {% set enr = config.enrichment if config.enrichment is defined else {} %}
+          <div>
+            <label>Token ipinfo.io
+              <small style="font-weight:normal;color:var(--muted,#888)">
+                — Gratis hasta 50k req/mes &nbsp;·&nbsp;
+                {% if config.features.external_links %}<a href="https://ipinfo.io/signup" target="_blank" rel="noopener">Obtener token</a>{% else %}ipinfo.io/signup{% endif %}
+              </small>
+            </label>
+            <input name="enrichment_ipinfo_token" type="password"
+              placeholder="{{ 'configurado ✓' if enr.ipinfo_token else 'sin token (limite 1k req/dia)' }}">
+          </div>
+          <div style="margin-top:.75rem">
+            <label>Shodan API Key
+              <small style="font-weight:normal;color:var(--muted,#888)">
+                — InternetDB funciona sin clave · Para full Shodan API
+              </small>
+            </label>
+            <input name="enrichment_shodan_key" type="password"
+              placeholder="{{ 'configurado ✓' if enr.shodan_key else 'opcional — InternetDB no requiere clave' }}">
+          </div>
+        </section>
       </div>
 
       <div class="actions">

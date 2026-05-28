@@ -184,6 +184,12 @@ def _default_config() -> dict:
             "action_jail": os.getenv("FAIL2BAN_UI_DECISION_ACTION_JAIL", "blacklist-permanent"),
             "notify_recommendations": os.getenv("FAIL2BAN_UI_DECISION_NOTIFY", "1") == "1",
         },
+        "enrichment": {
+            # ipinfo.io — token gratis: https://ipinfo.io/signup (50k req/mes)
+            "ipinfo_token": os.getenv("FAIL2BAN_UI_IPINFO_TOKEN", ""),
+            # Shodan InternetDB — sin clave, pero se puede agregar en el futuro
+            "shodan_key": os.getenv("FAIL2BAN_UI_SHODAN_KEY", ""),
+        },
     }
 
 
@@ -199,6 +205,7 @@ def _merge_config(saved: dict | None = None) -> dict:
     config["notch"].update(saved.get("notch") or {})
     config["decisions"].update(saved.get("decisions") or {})
     config["jail_meta"].update(saved.get("jail_meta") or {})
+    config["enrichment"].update(saved.get("enrichment") or {})
     return config
 
 
@@ -247,6 +254,10 @@ def feature_enabled(name: str) -> bool:
 
 def notch_config() -> dict:
     return CONFIG.get("notch", {})
+
+
+def enrichment_config() -> dict:
+    return CONFIG.get("enrichment", {})
 
 
 def decisions_config() -> dict:
@@ -418,7 +429,9 @@ def geoip(ip: str) -> dict:
     if ip in _geo_cache:
         return _geo_cache[ip]
     try:
-        data = _fetch_json(f"https://ipinfo.io/{ip}/json")
+        token = enrichment_config().get("ipinfo_token", "")
+        url = f"https://ipinfo.io/{ip}/json?token={token}" if token else f"https://ipinfo.io/{ip}/json"
+        data = _fetch_json(url)
         loc = data.get("loc", "0,0").split(",")
         result = {
             "country": data.get("country", "--"),
@@ -895,6 +908,12 @@ def _config_from_form(form, existing: dict) -> dict:
                 "threshold": max(1, min(100, int(form.get("decision_threshold") or 5))),
                 "action_jail": form.get("decision_action_jail", "blacklist-permanent").strip(),
                 "notify_recommendations": _bool_from_form(form, "decision_notify_recommendations"),
+            },
+            "enrichment": {
+                "ipinfo_token": form.get("enrichment_ipinfo_token", "").strip()
+                    or (existing.get("enrichment") or {}).get("ipinfo_token", ""),
+                "shodan_key": form.get("enrichment_shodan_key", "").strip()
+                    or (existing.get("enrichment") or {}).get("shodan_key", ""),
             },
         }
     )
