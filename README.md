@@ -60,8 +60,8 @@ flowchart TD
   UI --> F2B[fail2ban-client]
   UI --> Journal[journalctl]
   UI --> SS[ss/iproute2]
-  UI --> Config[/etc/fail2ban-ui/config.json]
-  Timer[systemd timer] --> Tick[decision tick]
+  UI --> Config["/etc/fail2ban-ui/config.json"]
+  Timer["systemd timer"] --> Tick["decision tick"]
   Tick --> UI
   UI -->|opcional| Notch[Notch webhook]
 ```
