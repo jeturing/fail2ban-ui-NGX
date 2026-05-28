@@ -25,6 +25,8 @@ Secure, self-hosted web dashboard for operating and monitoring Fail2ban. Feature
 
 ![Recent SSH and portscan attempts table with listening ports inventory](docs/assets/screenshot-attempts.png)
 
+![Recent attempts continued](docs/assets/screenshot-attempts-2.png)
+
 ---
 
 ## Table of Contents
