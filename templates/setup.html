@@ -199,6 +199,52 @@
               placeholder="{{ 'configurado ✓' if enr.shodan_key else 'opcional — InternetDB no requiere clave' }}">
           </div>
         </section>
+
+        <section>
+          <h2>NPM Sidecar — Nginx Proxy Manager</h2>
+          <p style="font-size:.85rem;color:var(--muted,#888);margin-bottom:1rem;">
+            Integración con <strong>npm-custom sidecar</strong>. Cuando está activo y
+            <em>Sync bans</em> está habilitado, cada IP baneada por fail2ban también se bloquea
+            a nivel HTTP en Nginx Proxy Manager vía la access list configurada.
+          </p>
+          {% set npm = config.npm_sidecar if config.npm_sidecar is defined else {} %}
+          <div class="switch-row">
+            <div><strong>Habilitar integración NPM</strong><br>
+              <span>Conecta con el sidecar de orquestación.</span>
+            </div>
+            <label class="switch">
+              <input name="npm_enabled" type="checkbox" {% if npm.enabled %}checked{% endif %}>
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div class="switch-row" style="margin-top:.5rem">
+            <div><strong>Sincronizar bans → NPM</strong><br>
+              <span>Al banear una IP también se agrega a la access list de bloqueo en NPM.</span>
+            </div>
+            <label class="switch">
+              <input name="npm_sync_bans" type="checkbox" {% if npm.sync_bans %}checked{% endif %}>
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div style="margin-top:.75rem">
+            <label>URL del sidecar
+              <small style="font-weight:normal;color:var(--muted,#888)">— ej: http://10.10.20.205:8888</small>
+            </label>
+            <input name="npm_url" value="{{ npm.url or '' }}" placeholder="http://10.10.20.205:8888">
+          </div>
+          <div style="margin-top:.75rem">
+            <label>API Key del sidecar
+              <small style="font-weight:normal;color:var(--muted,#888)">— header x-api-key</small>
+            </label>
+            <input name="npm_api_key" type="password"
+              placeholder="{{ 'configurado ✓' if npm.api_key else 'opcional si el sidecar no requiere clave' }}">
+          </div>
+          <div style="margin-top:.75rem">
+            <label>Nombre de la access list en NPM</label>
+            <input name="npm_access_list_name" value="{{ npm.access_list_name or 'fail2ban-blocked' }}"
+              placeholder="fail2ban-blocked">
+          </div>
+        </section>
       </div>
 
       <div class="actions">

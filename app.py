@@ -190,6 +190,16 @@ def _default_config() -> dict:
             # Shodan InternetDB — sin clave, pero se puede agregar en el futuro
             "shodan_key": os.getenv("FAIL2BAN_UI_SHODAN_KEY", ""),
         },
+        "npm_sidecar": {
+            # URL del sidecar npm-custom (ej: http://10.10.20.205:8888)
+            "enabled": os.getenv("FAIL2BAN_UI_NPM_ENABLED", "0") == "1",
+            "url": os.getenv("FAIL2BAN_UI_NPM_URL", ""),
+            "api_key": os.getenv("FAIL2BAN_UI_NPM_API_KEY", ""),
+            # Si True, al banear en fail2ban también bloquea en NPM access list
+            "sync_bans": os.getenv("FAIL2BAN_UI_NPM_SYNC_BANS", "0") == "1",
+            # Nombre de la access list en NPM donde se agregan las IPs baneadas
+            "access_list_name": os.getenv("FAIL2BAN_UI_NPM_ACCESS_LIST", "fail2ban-blocked"),
+        },
     }
 
 
@@ -206,6 +216,7 @@ def _merge_config(saved: dict | None = None) -> dict:
     config["decisions"].update(saved.get("decisions") or {})
     config["jail_meta"].update(saved.get("jail_meta") or {})
     config["enrichment"].update(saved.get("enrichment") or {})
+    config["npm_sidecar"].update(saved.get("npm_sidecar") or {})
     return config
 
 
@@ -258,6 +269,10 @@ def notch_config() -> dict:
 
 def enrichment_config() -> dict:
     return CONFIG.get("enrichment", {})
+
+
+def npm_sidecar_config() -> dict:
+    return CONFIG.get("npm_sidecar", {})
 
 
 def decisions_config() -> dict:
@@ -468,6 +483,128 @@ def shodan_idb(ip: str) -> dict:
     return result
 
 
+# ─── NPM Sidecar integration ─────────────────────────────────────────────────
+
+def _npm_headers() -> dict:
+    key = npm_sidecar_config().get("api_key", "")
+    headers = {"User-Agent": "fail2ban-ui/1.0", "Content-Type": "application/json"}
+    if key:
+        headers["x-api-key"] = key
+    return headers
+
+
+def npm_push_ban(ip: str) -> bool:
+    """Agrega una IP a la access list de bloqueo en NPM vía sidecar."""
+    npm = npm_sidecar_config()
+    if not npm.get("enabled") or not npm.get("sync_bans") or not npm.get("url"):
+        return False
+    try:
+        base = npm["url"].rstrip("/")
+        # 1. Obtener o crear la access list
+        req = urllib.request.Request(
+            f"{base}/npm/access-lists",
+            headers=_npm_headers(),
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            lists = json.loads(resp.read())
+        target = next((lst for lst in lists if lst.get("name") == npm["access_list_name"]), None)
+        if not target:
+            # Crear la access list
+            body = json.dumps({"name": npm["access_list_name"], "satisfy_any": True, "pass_auth": False}).encode()
+            create_req = urllib.request.Request(
+                f"{base}/npm/access-lists",
+                data=body, headers=_npm_headers(), method="POST",
+            )
+            with urllib.request.urlopen(create_req, timeout=5) as resp:
+                target = json.loads(resp.read())
+        list_id = target.get("id")
+        if not list_id:
+            return False
+        # 2. Añadir regla deny para la IP
+        clients = target.get("clients") or []
+        if not any(c.get("address") == ip for c in clients):
+            clients.append({"address": ip, "directive": "deny"})
+            update_body = json.dumps({
+                "name": npm["access_list_name"],
+                "satisfy_any": True,
+                "pass_auth": False,
+                "clients": clients,
+            }).encode()
+            update_req = urllib.request.Request(
+                f"{base}/npm/access-lists/{list_id}",
+                data=update_body, headers=_npm_headers(), method="PUT",
+            )
+            with urllib.request.urlopen(update_req, timeout=5):
+                pass
+        return True
+    except Exception:
+        return False
+
+
+def npm_push_unban(ip: str) -> bool:
+    """Elimina una IP de la access list de bloqueo en NPM vía sidecar."""
+    npm = npm_sidecar_config()
+    if not npm.get("enabled") or not npm.get("sync_bans") or not npm.get("url"):
+        return False
+    try:
+        base = npm["url"].rstrip("/")
+        req = urllib.request.Request(
+            f"{base}/npm/access-lists",
+            headers=_npm_headers(),
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            lists = json.loads(resp.read())
+        target = next((lst for lst in lists if lst.get("name") == npm["access_list_name"]), None)
+        if not target:
+            return False
+        list_id = target.get("id")
+        clients = [c for c in (target.get("clients") or []) if c.get("address") != ip]
+        update_body = json.dumps({
+            "name": npm["access_list_name"],
+            "satisfy_any": True,
+            "pass_auth": False,
+            "clients": clients,
+        }).encode()
+        update_req = urllib.request.Request(
+            f"{base}/npm/access-lists/{list_id}",
+            data=update_body, headers=_npm_headers(), method="PUT",
+        )
+        with urllib.request.urlopen(update_req, timeout=5):
+            pass
+        return True
+    except Exception:
+        return False
+
+
+def npm_get_proxy_hosts() -> list[dict]:
+    """Obtiene lista de proxy hosts activos del sidecar."""
+    npm = npm_sidecar_config()
+    if not npm.get("enabled") or not npm.get("url"):
+        return []
+    try:
+        base = npm["url"].rstrip("/")
+        req = urllib.request.Request(
+            f"{base}/proxy-hosts",
+            headers=_npm_headers(),
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            hosts = json.loads(resp.read())
+        return [
+            {
+                "id": h.get("id"),
+                "domains": h.get("domain_names", []),
+                "forward": f"{h.get('forward_scheme','http')}://{h.get('forward_host')}:{h.get('forward_port')}",
+                "enabled": h.get("enabled", True),
+                "ssl": bool(h.get("certificate_id")),
+            }
+            for h in (hosts if isinstance(hosts, list) else [])
+        ]
+    except Exception:
+        return []
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+
 def f2b(cmd: list[str]) -> str:
     try:
         result = subprocess.run(
@@ -580,6 +717,7 @@ def evaluate_decisions(attempts: list[dict], banned_ips: set[str]) -> list[dict]
             action_key = f"ban:{action_jail}:{source_ip}"
             if action_key not in state.get("actions", []):
                 f2b(["set", action_jail, "banip", source_ip])
+                npm_push_ban(source_ip)
                 state.setdefault("actions", []).append(action_key)
                 action_result = "executed"
             else:
@@ -846,6 +984,10 @@ def get_all_stats() -> dict:
         "top_ports": top_ports,
         "listening_ports": listening_ports,
         "map_points": map_points,
+        "npm": {
+            "enabled": npm_sidecar_config().get("enabled", False),
+            "proxy_hosts": npm_get_proxy_hosts(),
+        },
         "updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
 
@@ -914,6 +1056,14 @@ def _config_from_form(form, existing: dict) -> dict:
                     or (existing.get("enrichment") or {}).get("ipinfo_token", ""),
                 "shodan_key": form.get("enrichment_shodan_key", "").strip()
                     or (existing.get("enrichment") or {}).get("shodan_key", ""),
+            },
+            "npm_sidecar": {
+                "enabled": _bool_from_form(form, "npm_enabled"),
+                "url": form.get("npm_url", "").strip(),
+                "api_key": form.get("npm_api_key", "").strip()
+                    or (existing.get("npm_sidecar") or {}).get("api_key", ""),
+                "sync_bans": _bool_from_form(form, "npm_sync_bans"),
+                "access_list_name": form.get("npm_access_list_name", "fail2ban-blocked").strip(),
             },
         }
     )
@@ -1004,7 +1154,8 @@ def unban(ip: str):
         return jsonify({"ok": False, "error": "IP invalida"}), 400
     for jail in cfg("jails", DEFAULT_JAILS):
         f2b(["set", jail, "unbanip", ip])
-    return jsonify({"ok": True, "ip": _mask_ip(ip)})
+    npm_push_unban(ip)
+    return jsonify({"ok": True, "ip": _mask_ip(ip), "npm_sync": npm_sidecar_config().get("sync_bans", False)})
 
 
 @app.route("/api/geoip/<ip>")
@@ -1015,6 +1166,30 @@ def api_geoip(ip: str):
     if not re.match(r"^[0-9a-fA-F:.]+$", ip):
         return jsonify({"error": "IP invalida"}), 400
     return jsonify(geoip(ip))
+
+
+@app.route("/api/npm/status")
+@require_api_enabled
+def api_npm_status():
+    """Estado del sidecar NPM: proxy hosts activos y access list de bloqueo."""
+    npm = npm_sidecar_config()
+    if not npm.get("enabled"):
+        return jsonify({"error": "npm_sidecar_disabled"}), 404
+    try:
+        base = npm["url"].rstrip("/")
+        # Health del sidecar
+        req = urllib.request.Request(f"{base}/health", headers=_npm_headers())
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            health = json.loads(resp.read())
+    except Exception as exc:
+        health = {"ok": False, "error": str(exc)}
+    return jsonify({
+        "sidecar_url": npm["url"],
+        "sync_bans": npm.get("sync_bans", False),
+        "access_list_name": npm.get("access_list_name", "fail2ban-blocked"),
+        "health": health,
+        "proxy_hosts": npm_get_proxy_hosts(),
+    })
 
 
 @app.route("/api/shodan/<ip>")
