@@ -5,6 +5,8 @@
 [![Fail2ban](https://img.shields.io/badge/Fail2ban-secure%20ops-red.svg)](#)
 [![API](https://img.shields.io/badge/API-OpenAPI-green.svg)](#api-y-swagger)
 [![Autor](https://img.shields.io/badge/Autor-Jeturing-informational.svg)](https://jeturing.com)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+[![Security](https://img.shields.io/badge/Security-Policy-red.svg)](SECURITY.md)
 
 Panel web seguro para operar y observar Fail2ban con setup inicial, Basic Auth, API local, Swagger sin CDN, notificaciones Notch y motor de decisiones configurable.
 
@@ -230,4 +232,5 @@ bash -n scripts/install.sh
 
 ---
 
-Copyright Jeturing. Revisar licencia final antes de publicar el repositorio.
+Distribuido bajo la licencia [GNU General Public License v3.0](LICENSE).
+Copyright © 2026 [Jeturing](https://jeturing.com). Ver [SECURITY.md](SECURITY.md) para reportar vulnerabilidades.
