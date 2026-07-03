@@ -178,7 +178,7 @@ def _default_config() -> dict:
             "min_severity": os.getenv("FAIL2BAN_UI_NOTCH_MIN_SEVERITY", "warning"),
         },
         "decisions": {
-            "enabled": os.getenv("FAIL2BAN_UI_DECISIONS_ENABLED", "0") == "1",
+            "enabled": os.getenv("FAIL2BAN_UI_DECISIONS_ENABLED", "1") == "1",
             "mode": os.getenv("FAIL2BAN_UI_DECISION_MODE", "recommend"),
             "threshold": _env_int("FAIL2BAN_UI_DECISION_THRESHOLD", 5),
             "action_jail": os.getenv("FAIL2BAN_UI_DECISION_ACTION_JAIL", "blacklist-permanent"),
@@ -369,13 +369,18 @@ def _auth_response(message: str = "Autenticacion requerida") -> Response:
 def gatekeeper():
     if request.path == "/health":
         return None
+    
+    # Webhook receptor de notificaciones (sin autenticación)
+    if request.path == "/api/fail2ban" and request.method == "POST":
+        return None
 
     if not configured():
-        if request.path.startswith("/setup") and _setup_token_ok(request.form.to_dict()):
+        if (request.path.startswith("/setup") or request.path.startswith("/settings")) and _setup_token_ok(request.form.to_dict()):
             return None
         if request.path.startswith("/api"):
             return jsonify({"error": "setup_required"}), 428
-        return redirect(url_for("setup", token=request.args.get("token", "")))
+        setup_token = request.args.get("token") or SETUP_TOKEN
+        return redirect(url_for("setup", token=setup_token))
 
     if not _basic_auth_ok():
         return _auth_response()
@@ -438,6 +443,19 @@ def _empty_geo(ip: str = "") -> dict:
     }
 
 
+def _pseudo_geo_from_ip(ip: str) -> tuple[float, float]:
+    """Coordenadas estimadas determinísticas para visualización cuando no hay GeoIP real."""
+    try:
+        digest = hashlib.sha256(ip.encode("utf-8")).hexdigest()
+        lat_seed = int(digest[:8], 16)
+        lon_seed = int(digest[8:16], 16)
+        lat = (lat_seed / 0xFFFFFFFF) * 140 - 70
+        lon = (lon_seed / 0xFFFFFFFF) * 340 - 170
+        return round(lat, 4), round(lon, 4)
+    except Exception:
+        return 0.0, 0.0
+
+
 def geoip(ip: str) -> dict:
     if not feature_enabled("external_enrichment"):
         return _empty_geo(ip)
@@ -479,6 +497,32 @@ def shodan_idb(ip: str) -> dict:
         }
     except Exception:
         result = {"ports": [], "hostnames": [], "tags": [], "vulns": [], "cpes": []}
+    _shodan_cache[ip] = result
+    return result
+
+
+def shodan_idb_on_demand(ip: str) -> dict:
+    """Consulta Shodan InternetDB aun con enrichment apagado, para drill-down manual."""
+    try:
+        parsed = ipaddress.ip_address(ip)
+        if parsed.is_private or parsed.is_loopback or parsed.is_reserved or parsed.is_multicast:
+            return {"ports": [], "hostnames": [], "tags": [], "vulns": [], "cpes": [], "note": "ip_no_publica"}
+    except ValueError:
+        return {"ports": [], "hostnames": [], "tags": [], "vulns": [], "cpes": [], "note": "ip_invalida"}
+    if ip in _shodan_cache:
+        return _shodan_cache[ip]
+    try:
+        data = _fetch_json(f"https://internetdb.shodan.io/{ip}", timeout=4)
+        result = {
+            "ports": data.get("ports", []),
+            "hostnames": data.get("hostnames", []),
+            "tags": data.get("tags", []),
+            "vulns": data.get("vulns", []),
+            "cpes": data.get("cpes", []),
+            "source": "shodan_internetdb",
+        }
+    except Exception:
+        result = {"ports": [], "hostnames": [], "tags": [], "vulns": [], "cpes": [], "source": "shodan_internetdb"}
     _shodan_cache[ip] = result
     return result
 
@@ -800,31 +844,87 @@ def parse_status(jail: str) -> dict:
     }
 
 
+def _classify_port_exposure(host: str) -> str:
+    host = (host or "").strip("[]")
+    if host in {"127.0.0.1", "::1"} or host.startswith("127."):
+        return "loopback"
+    if host.startswith("100.") or host.startswith("fd7a:"):
+        return "tailscale"
+    if host in {"0.0.0.0", "::", "*"}:
+        return "public"
+    try:
+        ip = ipaddress.ip_address(host)
+        if ip.is_loopback:
+            return "loopback"
+        if ip.is_private:
+            return "interna"
+        return "public"
+    except ValueError:
+        return "public"
+
+
+def _port_risk(port: int, exposure: str) -> str:
+    if exposure != "public":
+        return "low"
+    high = {21, 23, 111, 135, 139, 445, 1433, 1521, 3306, 5432, 6379, 11211, 27017}
+    medium = {22, 80, 443, 3389, 8080, 8443}
+    if port in high:
+        return "high"
+    if port in medium:
+        return "medium"
+    return "medium"
+
+
+def _source_scope(ip: str) -> str:
+    try:
+        parsed = ipaddress.ip_address(ip)
+    except ValueError:
+        return "desconocido"
+    if parsed.is_loopback:
+        return "loopback"
+    if parsed.is_private:
+        return "interna"
+    if parsed.is_reserved or parsed.is_multicast:
+        return "reservada"
+    return "internet"
+
+
 def get_listening_ports() -> list[dict]:
     if not feature_enabled("port_inventory"):
         return []
-    raw = run_cmd(["ss", "-tlnpH"])
+    raw = run_cmd(["ss", "-tulnpH"])
     ports = []
     for line in raw.splitlines():
-        parts = line.split()
-        if len(parts) < 5:
+        match = re.match(r"^(tcp|udp)\s+\S+\s+\d+\s+\d+\s+(\S+)\s+\S+(?:\s+(.*))?$", line)
+        if not match:
             continue
-        local = parts[3]
-        process = " ".join(parts[5:]) if len(parts) > 5 else "-"
-        port_match = re.search(r":(\d+)$", local)
+        protocol = (match.group(1) or "tcp").upper()
+        local = match.group(2)
+        process = (match.group(3) or "-").strip()
+        local = local.strip()
+        if local.startswith("[") and "]" in local:
+            host = local[1 : local.rfind("]")]
+            tail = local[local.rfind("]") + 1 :]
+            port_match = re.search(r":(\d+)$", tail)
+        else:
+            host = local.rsplit(":", 1)[0] if ":" in local else local
+            port_match = re.search(r":(\d+)$", local)
         if not port_match:
             continue
         port = int(port_match.group(1))
-        host = local[: local.rfind(":")]
-        exposure = "public"
-        if host.startswith("127.") or host == "::1":
-            exposure = "loopback"
-        elif host.startswith("100.") or host.startswith("fd7a:"):
-            exposure = "tailscale"
-        elif host.startswith("10.") or host.startswith("192.168."):
-            exposure = "interna"
-        ports.append({"port": port, "host": host, "process": process or "-", "exposure": exposure})
-    return sorted(ports, key=lambda item: (item["exposure"], item["port"]))
+        exposure = _classify_port_exposure(host)
+        risk = _port_risk(port, exposure)
+        ports.append(
+            {
+                "port": port,
+                "protocol": protocol,
+                "host": host,
+                "process": process or "-",
+                "exposure": exposure,
+                "risk": risk,
+            }
+        )
+    return sorted(ports, key=lambda item: (item["exposure"], item["risk"], item["port"], item["protocol"]))
 
 
 def get_recent_attempts(limit: int = 60) -> tuple[list[dict], list[dict]]:
@@ -850,6 +950,7 @@ def get_recent_attempts(limit: int = 60) -> tuple[list[dict], list[dict]]:
                 "at": line[:25].strip(),
                 "source_ip": src.group(1),
                 "display_ip": _mask_ip(src.group(1)),
+                "source_scope": _source_scope(src.group(1)),
                 "target_port": port,
                 "protocol": proto.group(1) if proto else "TCP",
                 "kind": kind,
@@ -871,6 +972,7 @@ def get_recent_attempts(limit: int = 60) -> tuple[list[dict], list[dict]]:
                     "at": line[:25].strip(),
                     "source_ip": source_ip,
                     "display_ip": _mask_ip(source_ip),
+                    "source_scope": _source_scope(source_ip),
                     "target_port": 22,
                     "protocol": "TCP",
                     "kind": "ssh-failed",
@@ -886,6 +988,7 @@ def get_recent_attempts(limit: int = 60) -> tuple[list[dict], list[dict]]:
                     "at": line[:25].strip(),
                     "source_ip": closed.group(2),
                     "display_ip": _mask_ip(closed.group(2)),
+                    "source_scope": _source_scope(closed.group(2)),
                     "target_port": 22,
                     "protocol": "TCP",
                     "kind": "ssh-closed",
@@ -897,6 +1000,214 @@ def get_recent_attempts(limit: int = 60) -> tuple[list[dict], list[dict]]:
     attempts.sort(key=lambda item: item["at"], reverse=True)
     top_ports = [{"port": port, "hits": hits} for port, hits in port_counter.most_common(12)]
     return attempts[:limit], top_ports
+
+
+def auto_blacklist_enforcement(events: list[dict]) -> None:
+    """
+    Implementa regla de blacklist automática:
+    - Si una IP tiene 120+ eventos interneteros → blacklist 24h (fail2ban)
+    - Si está EN blacklist 24h y vuelve a atacar 3+ veces más → blacklist permanente
+    """
+    try:
+        # Cargar historial de blacklists desde state.json
+        state_path = os.getenv("FAIL2BAN_UI_STATE_PATH", "/var/lib/fail2ban-ui/state.json")
+        state = {}
+        if os.path.exists(state_path):
+            try:
+                with open(state_path, "r", encoding="utf-8") as f:
+                    state = json.load(f)
+            except Exception:
+                state = {}
+        
+        blacklist_24h_state = state.get("blacklist_24h_state", {})  # {ip: {count, first_seen}}
+        already_permanent = state.get("blacklist_permanent_ips", set())
+        
+        # Contar eventos por IP (solo internet scope)
+        internet_events = [e for e in events if e.get("source_scope") == "internet" and e.get("malicious")]
+        ip_counts = Counter(e.get("source_ip") for e in internet_events if e.get("source_ip"))
+        
+        # Regla 1: 120+ eventos → blacklist 24h
+        for ip, count in ip_counts.items():
+            if count >= 120 and ip not in already_permanent:
+                if ip not in blacklist_24h_state:
+                    print(f"[AUTO-BLACKLIST] {ip}: {count} eventos, aplicando ban 24h")
+                    for jail in cfg("jails", DEFAULT_JAILS):
+                        f2b(["set", jail, "banip", ip])
+                    blacklist_24h_state[ip] = {"count": count, "first_seen": datetime.now().isoformat()}
+                    npm_push_ban(ip)
+        
+        # Regla 2: Si está en 24h y vuelve a atacar 3+ veces → permanente
+        for ip in list(blacklist_24h_state.keys()):
+            if ip not in already_permanent and ip in ip_counts:
+                current_count = ip_counts[ip]
+                prev_count = blacklist_24h_state[ip].get("count", 0)
+                new_attacks = current_count - prev_count
+                
+                if new_attacks >= 3:
+                    print(f"[AUTO-BLACKLIST] {ip}: ya estaba baneada, +{new_attacks} intentos nuevos, moviendo a PERMANENTE")
+                    f2b(["set", "blacklist-permanent", "banip", ip])
+                    already_permanent.add(ip)
+                    del blacklist_24h_state[ip]
+                    npm_push_ban(ip)
+                else:
+                    blacklist_24h_state[ip]["count"] = current_count
+        
+        # Guardar estado actualizado
+        state["blacklist_24h_state"] = blacklist_24h_state
+        state["blacklist_permanent_ips"] = list(already_permanent)
+        state["auto_blacklist_last_run"] = datetime.now().isoformat()
+        
+        os.makedirs(os.path.dirname(state_path), exist_ok=True, mode=0o700)
+        tmp_path = f"{state_path}.tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2, ensure_ascii=False)
+        os.chmod(tmp_path, 0o600)
+        os.replace(tmp_path, state_path)
+    except Exception as e:
+        print(f"[AUTO-BLACKLIST] Error: {e}")
+
+
+def get_fail2ban_events(limit: int = 120) -> list[dict]:
+    raw = run_cmd(["tail", "-n", "600", "/var/log/fail2ban.log"])
+    events: list[dict] = []
+    for line in raw.splitlines():
+        m_action = re.search(
+            r"^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2},\d+)\s+fail2ban\.actions\s+\[[^\]]+\]:\s+NOTICE\s+\[(?P<jail>[^\]]+)\]\s+(?P<action>Ban|Unban)\s+(?P<ip>[0-9a-fA-F:.]+)",
+            line,
+        )
+        if m_action:
+            ip = m_action.group("ip")
+            action = m_action.group("action").lower()
+            jail = m_action.group("jail")
+            events.append(
+                {
+                    "at": m_action.group(1),
+                    "source_ip": ip,
+                    "display_ip": _mask_ip(ip),
+                    "source_scope": _source_scope(ip),
+                    "target_port": "-",
+                    "protocol": "-",
+                    "kind": f"f2b-{action}",
+                    "detail": f"{action.upper()} en jail {jail}",
+                    "malicious": action == "ban",
+                }
+            )
+            continue
+
+        m_found = re.search(
+            r"^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2},\d+)\s+fail2ban\.filter\s+\[[^\]]+\]:\s+INFO\s+\[(?P<jail>[^\]]+)\]\s+Found\s+(?P<ip>[0-9a-fA-F:.]+)",
+            line,
+        )
+        if m_found:
+            ip = m_found.group("ip")
+            jail = m_found.group("jail")
+            events.append(
+                {
+                    "at": m_found.group(1),
+                    "source_ip": ip,
+                    "display_ip": _mask_ip(ip),
+                    "source_scope": _source_scope(ip),
+                    "target_port": "-",
+                    "protocol": "-",
+                    "kind": "f2b-found",
+                    "detail": f"Detectado por fail2ban en jail {jail}",
+                    "malicious": True,
+                }
+            )
+
+    events.reverse()
+    return events[:limit]
+
+
+def _event_sort_key(event: dict) -> datetime:
+    raw = str(event.get("at") or "").strip()
+    for fmt in ("%Y-%m-%d %H:%M:%S,%f", "%b %d %H:%M:%S"):
+        try:
+            parsed = datetime.strptime(raw, fmt)
+            if fmt == "%b %d %H:%M:%S":
+                parsed = parsed.replace(year=datetime.now().year)
+            return parsed
+        except ValueError:
+            continue
+    return datetime.min
+
+
+def _compute_security_posture(
+    listening_ports: list[dict],
+    port_monitor: dict,
+    summary: dict,
+    feature_flags: dict,
+    protected_whitelist: list[str],
+) -> dict:
+    score = 100
+    findings: list[str] = []
+    recommendations: list[str] = []
+
+    public_total = int(port_monitor.get("public_total", 0))
+    high_risk = port_monitor.get("high_risk_public", []) or []
+    total_failed = int(summary.get("total_failed", 0))
+
+    if public_total > 0:
+        score -= min(20, public_total * 2)
+        findings.append(f"{public_total} puertos expuestos en WAN")
+        recommendations.append("Reducir puertos expuestos y mantener servicios de gestión solo por VPN/loopback")
+
+    if high_risk:
+        score -= min(30, len(high_risk) * 6)
+        uniq = sorted({f"{p.get('port')}/{p.get('protocol')}" for p in high_risk})
+        findings.append(f"Puertos de riesgo alto públicos: {', '.join(uniq[:6])}")
+        recommendations.append("Filtrar puertos de riesgo alto en firewall de host")
+        if any((p.get("port") in {111, 2049}) for p in high_risk):
+            findings.append("Servicios RPC/NFS expuestos en WAN (riesgo para NAS)")
+            recommendations.append("Mover NAS a red VPN privada y bloquear 111/2049 en IP pública")
+
+    if total_failed > 0:
+        score -= min(20, total_failed)
+        findings.append(f"{total_failed} fallos activos en jails")
+
+    if not feature_flags.get("write_actions"):
+        score -= 8
+        findings.append("Panel en modo solo lectura (sin acciones correctivas desde UI)")
+
+    if not feature_flags.get("api_enabled"):
+        score -= 3
+        findings.append("API deshabilitada (limita integración y automatización)")
+
+    if "216.106.182.26/32" not in set(protected_whitelist):
+        score -= 15
+        findings.append("IP pública del servidor no está en whitelist protegida")
+        recommendations.append("Agregar 216.106.182.26/32 a protected_whitelist")
+
+    has_ssh_public = any(
+        p.get("port") == 22 and p.get("exposure") == "public" and p.get("protocol") == "TCP"
+        for p in listening_ports
+    )
+    if has_ssh_public:
+        score -= 8
+        findings.append("SSH público detectado en WAN")
+        recommendations.append("Restringir SSH por allowlist o mover acceso administrativo a VPN")
+
+    score = max(0, min(100, score))
+    if score >= 85:
+        level = "alta"
+        tone = "ok"
+    elif score >= 65:
+        level = "media"
+        tone = "warn"
+    else:
+        level = "critica"
+        tone = "danger"
+
+    if not recommendations:
+        recommendations.append("Mantener revisión periódica de puertos y eventos en jails")
+
+    return {
+        "score": score,
+        "level": level,
+        "tone": tone,
+        "findings": findings[:6],
+        "recommendations": recommendations[:6],
+    }
 
 
 def get_all_stats() -> dict:
@@ -918,13 +1229,18 @@ def get_all_stats() -> dict:
         if "/" in line or re.search(r"\d{1,3}\.\d{1,3}", line)
     ]
     recent_attempts, top_ports = get_recent_attempts()
+    fail2ban_events = get_fail2ban_events()
+    attack_events = sorted((recent_attempts + fail2ban_events), key=_event_sort_key, reverse=True)[:220]
+    
+    # Ejecutar auto-blacklist enforcement
+    auto_blacklist_enforcement(attack_events)
     listening_ports = get_listening_ports()
-    decisions = evaluate_decisions(recent_attempts, set(all_ips))
+    decisions = evaluate_decisions(attack_events, set(all_ips))
 
-    unique_ips = list({attempt["source_ip"] for attempt in recent_attempts if attempt["malicious"]})
+    unique_ips = list({attempt["source_ip"] for attempt in attack_events if attempt["malicious"]})
     geo_map = {ip: geoip(ip) for ip in unique_ips[:40]} if feature_enabled("external_enrichment") else {}
     shodan_map = {ip: shodan_idb(ip) for ip in unique_ips[:40]} if feature_enabled("external_enrichment") else {}
-    for attempt in recent_attempts:
+    for attempt in attack_events:
         attempt["geo"] = geo_map.get(attempt["source_ip"], _empty_geo(attempt["source_ip"]))
         attempt["shodan"] = shodan_map.get(attempt["source_ip"], {"ports": [], "hostnames": [], "tags": [], "vulns": [], "cpes": []})
 
@@ -935,27 +1251,89 @@ def get_all_stats() -> dict:
         ]
 
     map_points = []
-    if feature_enabled("external_enrichment"):
-        all_ip_set = set(all_ips)
-        for attempt in recent_attempts:
-            geo = attempt["geo"]
-            if geo.get("lat") == 0.0 and geo.get("lon") == 0.0:
-                continue
-            shodan = attempt.get("shodan", {})
+    all_ip_set = set(all_ips)
+    for attempt in attack_events:
+        source_ip = attempt.get("source_ip") or ""
+        geo = attempt.get("geo") or _empty_geo(source_ip)
+        lat = geo.get("lat") or 0.0
+        lon = geo.get("lon") or 0.0
+        estimated = False
+        if lat == 0.0 and lon == 0.0:
+            lat, lon = _pseudo_geo_from_ip(source_ip)
+            estimated = True
+        shodan = attempt.get("shodan", {})
+        map_points.append(
+            {
+                "ip": attempt["display_ip"],
+                "source_ip": source_ip,
+                "source_scope": attempt.get("source_scope", "desconocido"),
+                "lat": lat,
+                "lon": lon,
+                "country": geo.get("country", "--"),
+                "city": geo.get("city", ""),
+                "org": geo.get("org", ""),
+                "estimated": estimated,
+                "banned": source_ip in all_ip_set,
+                "kind": attempt["kind"],
+                "ports": shodan.get("ports", []),
+                "vulns": shodan.get("vulns", []),
+            }
+        )
+
+    public_ports = [p for p in listening_ports if p["exposure"] == "public"]
+    high_risk_public = [p for p in public_ports if p["risk"] == "high"]
+    if not map_points and cfg("server_public_ip"):
+        host_ip = str(cfg("server_public_ip") or "").strip()
+        if host_ip:
+            lat = float(cfg("server_lat", 0.0) or 0.0)
+            lon = float(cfg("server_lon", 0.0) or 0.0)
+            estimated = False
+            if lat == 0.0 and lon == 0.0:
+                lat, lon = _pseudo_geo_from_ip(host_ip)
+                estimated = True
             map_points.append(
                 {
-                    "ip": attempt["display_ip"],
-                    "lat": geo.get("lat"),
-                    "lon": geo.get("lon"),
-                    "country": geo.get("country"),
-                    "city": geo.get("city"),
-                    "org": geo.get("org"),
-                    "banned": attempt["source_ip"] in all_ip_set,
-                    "kind": attempt["kind"],
-                    "ports": shodan.get("ports", []),
-                    "vulns": shodan.get("vulns", []),
+                    "ip": _mask_ip(host_ip),
+                    "source_ip": host_ip,
+                    "source_scope": "internet",
+                    "lat": lat,
+                    "lon": lon,
+                    "country": "HOST",
+                    "city": "Superficie pública",
+                    "org": "servicio local",
+                    "estimated": estimated,
+                    "banned": False,
+                    "kind": "host-surface",
+                    "ports": [p.get("port") for p in public_ports[:10]],
+                    "vulns": [],
                 }
             )
+    port_monitor = {
+        "total": len(listening_ports),
+        "public_total": len(public_ports),
+        "tcp_total": sum(1 for p in listening_ports if p.get("protocol") == "TCP"),
+        "udp_total": sum(1 for p in listening_ports if p.get("protocol") == "UDP"),
+        "high_risk_public": high_risk_public[:20],
+    }
+    summary = {
+        "total_banned": total_banned,
+        "total_failed": total_failed,
+        "unique_ips": len(set(all_ips)),
+        "internet_events": sum(1 for a in attack_events if a.get("source_scope") == "internet" and a.get("malicious")),
+        "internal_events": sum(1 for a in attack_events if a.get("source_scope") in {"interna", "loopback"} and a.get("malicious")),
+        "logged_bans": sum(1 for a in attack_events if a.get("kind") == "f2b-ban"),
+    }
+    security_posture = _compute_security_posture(
+        listening_ports,
+        port_monitor,
+        summary,
+        features(),
+        cfg("protected_whitelist", []),
+    )
+    
+    # Cargar eventos webhook recibidos
+    state = _load_state()
+    webhook_events = state.get("webhook_events", [])
 
     return {
         "app": {"name": cfg("app_name"), "configured": configured()},
@@ -972,17 +1350,18 @@ def get_all_stats() -> dict:
             "density": cfg("ui_density", "comfortable"),
         },
         "jails": jails,
-        "summary": {
-            "total_banned": total_banned,
-            "total_failed": total_failed,
-            "unique_ips": len(set(all_ips)),
-        },
+        "summary": summary,
+        "security_posture": security_posture,
         "whitelist": whitelist,
         "protected_whitelist": cfg("protected_whitelist", []),
         "recent_attempts": recent_attempts,
+        "fail2ban_events": fail2ban_events,
+        "attack_events": attack_events,
         "decisions": decisions,
+        "webhook_events": webhook_events[-20:],  # Últimos 20 eventos
         "top_ports": top_ports,
         "listening_ports": listening_ports,
+        "port_monitor": port_monitor,
         "map_points": map_points,
         "npm": {
             "enabled": npm_sidecar_config().get("enabled", False),
@@ -1195,11 +1574,92 @@ def api_npm_status():
 @app.route("/api/shodan/<ip>")
 @require_api_enabled
 def api_shodan(ip: str):
-    if not feature_enabled("external_enrichment"):
-        return jsonify({"error": "external_enrichment_disabled"}), 403
     if not re.match(r"^[0-9a-fA-F:.]+$", ip):
         return jsonify({"error": "IP invalida"}), 400
-    return jsonify({**geoip(ip), **shodan_idb(ip)})
+    geo_data = geoip(ip) if feature_enabled("external_enrichment") else _empty_geo(ip)
+    return jsonify({**geo_data, **shodan_idb_on_demand(ip)})
+
+
+@app.route("/api/intel/<ip>")
+@require_api_enabled
+def api_intel(ip: str):
+    if not re.match(r"^[0-9a-fA-F:.]+$", ip):
+        return jsonify({"error": "IP invalida"}), 400
+    try:
+        parsed = ipaddress.ip_address(ip)
+    except ValueError:
+        return jsonify({"error": "IP invalida"}), 400
+    public = not (parsed.is_private or parsed.is_loopback or parsed.is_reserved or parsed.is_multicast)
+    geo_data = geoip(ip) if feature_enabled("external_enrichment") else _empty_geo(ip)
+    if not feature_enabled("external_enrichment") and (geo_data.get("lat") == 0.0 and geo_data.get("lon") == 0.0):
+        lat, lon = _pseudo_geo_from_ip(ip)
+        geo_data = {**geo_data, "lat": lat, "lon": lon, "org": "geo estimada", "estimated": True}
+    shodan_data = shodan_idb_on_demand(ip) if public else {"ports": [], "hostnames": [], "tags": [], "vulns": [], "cpes": [], "note": "ip_no_publica"}
+    return jsonify(
+        {
+            "ip": ip,
+            "display_ip": _mask_ip(ip),
+            "is_public": public,
+            "geo": geo_data,
+            "shodan": shodan_data,
+        }
+    )
+
+
+@app.route("/api/fail2ban", methods=["POST"])
+def webhook_fail2ban():
+    """
+    Webhook receptor de notificaciones Notch (sin autenticación).
+    Recibe eventos de fail2ban-ui y los integra en el dashboard.
+    """
+    try:
+        payload = request.get_json(force=True)
+        if not payload:
+            return jsonify({"ok": False, "error": "empty_payload"}), 400
+        
+        # Validar estructura básica
+        event_type = payload.get("type", "")
+        if not event_type.startswith("fail2ban-ui"):
+            return jsonify({"ok": False, "error": "invalid_event_type"}), 400
+        
+        # Cargar estado para registrar webhooks recibidos
+        state = _load_state()
+        if "webhook_events" not in state:
+            state["webhook_events"] = []
+        
+        # Agregar evento recibido con timestamp
+        event = {
+            "received_at": datetime.now().isoformat(),
+            "type": payload.get("type"),
+            "severity": payload.get("severity", "info"),
+            "source_ip": payload.get("source_ip", "unknown"),
+            "hits": payload.get("hits", 0),
+            "action": payload.get("action", "unknown"),
+            "action_result": payload.get("action_result", "pending"),
+        }
+        state["webhook_events"].append(event)
+        
+        # Mantener últimos 100 eventos
+        if len(state["webhook_events"]) > 100:
+            state["webhook_events"] = state["webhook_events"][-100:]
+        
+        _save_state(state)
+        
+        # Log del webhook recibido
+        print(f"[WEBHOOK] Recibido: {event['type']} | {event['severity']} | {event['source_ip']} | {event['action']}")
+        
+        return jsonify({
+            "ok": True,
+            "received": True,
+            "event_type": event_type,
+            "severity": event.get("severity"),
+            "action": event.get("action"),
+            "timestamp": event.get("received_at"),
+        }), 202
+    
+    except Exception as e:
+        print(f"[WEBHOOK] Error: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 400
 
 
 def _read_jail_local() -> str:
