@@ -52,6 +52,16 @@ STATE_PATH = os.getenv("FAIL2BAN_UI_STATE_PATH", "/var/lib/fail2ban-ui/state.jso
 SETUP_TOKEN = os.getenv("FAIL2BAN_UI_SETUP_TOKEN", "")
 PASSWORD_ITERATIONS = 240_000
 DEFAULT_JAILS = ["sshd", "portscan", "sensible-ports", "recidive-48h", "blacklist-permanent"]
+MAIL_RELAY_HOST_SERVICE = "sajet-mail-egress-firewall.service"
+MAIL_RELAY_PCT_SERVICE = "sajet-mail-inbound-firewall.service"
+MAIL_RELAY_ALLOWED_PCT_IP = "10.10.20.206"
+MAIL_RELAY_ALLOWED_DOCKER_CIDR = "172.18.0.0/16"
+MAIL_RELAY_ALLOWED_POSTFIX_NETS = {
+    "127.0.0.0/8",
+    "172.18.0.7/32",
+    "172.18.0.4/32",
+    "172.18.0.3/32",
+}
 DEFAULT_JAIL_META = {
     "sshd": {
         "title": "SSH",
@@ -389,14 +399,21 @@ def gatekeeper():
 
 @app.after_request
 def secure_headers(response):
-    response.headers.setdefault("X-Frame-Options", "DENY")
+    frame_ancestors = os.getenv(
+        "FAIL2BAN_UI_FRAME_ANCESTORS",
+        "'self' https://sajet.us https://www.sajet.us https://app.jeturing.com",
+    )
+    if frame_ancestors.strip() in {"'none'", "none"}:
+        response.headers.setdefault("X-Frame-Options", "DENY")
+    else:
+        response.headers.pop("X-Frame-Options", None)
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("Referrer-Policy", "no-referrer")
     response.headers.setdefault("Cache-Control", "no-store")
     response.headers.setdefault(
         "Content-Security-Policy",
-        "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
-        "script-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none';",
+        "default-src 'self'; img-src 'self' data: https://tile.openstreetmap.org https://a.tile.openstreetmap.org https://b.tile.openstreetmap.org https://c.tile.openstreetmap.org https://*.tile.openstreetmap.de https://tile.openstreetmap.de https://*.openstreetmap.org; style-src 'self' 'unsafe-inline'; "
+        f"script-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors {frame_ancestors};",
     )
     return response
 
@@ -436,7 +453,7 @@ def _empty_geo(ip: str = "") -> dict:
         "country": "--",
         "city": "",
         "region": "",
-        "org": "enriquecimiento externo apagado",
+        "org": "geo no disponible",
         "lat": 0.0,
         "lon": 0.0,
         "ip": ip,
@@ -458,13 +475,15 @@ def _pseudo_geo_from_ip(ip: str) -> tuple[float, float]:
 
 def geoip(ip: str) -> dict:
     if not feature_enabled("external_enrichment"):
-        return _empty_geo(ip)
+        return {**_empty_geo(ip), "org": "enriquecimiento externo apagado"}
     if ip in _geo_cache:
         return _geo_cache[ip]
     try:
         token = enrichment_config().get("ipinfo_token", "")
         url = f"https://ipinfo.io/{ip}/json?token={token}" if token else f"https://ipinfo.io/{ip}/json"
         data = _fetch_json(url)
+        if data.get("status") == 429 or data.get("error"):
+            raise RuntimeError("ipinfo_unavailable")
         loc = data.get("loc", "0,0").split(",")
         result = {
             "country": data.get("country", "--"),
@@ -476,7 +495,24 @@ def geoip(ip: str) -> dict:
             "ip": ip,
         }
     except Exception:
-        result = _empty_geo(ip)
+        try:
+            data = _fetch_json(
+                f"http://ip-api.com/json/{ip}?fields=status,country,countryCode,regionName,city,lat,lon,isp,org,query",
+                timeout=4,
+            )
+            if data.get("status") != "success":
+                raise RuntimeError("ip_api_unavailable")
+            result = {
+                "country": data.get("countryCode") or data.get("country") or "--",
+                "city": data.get("city", ""),
+                "region": data.get("regionName", ""),
+                "org": data.get("org") or data.get("isp") or "",
+                "lat": float(data.get("lat") or 0.0),
+                "lon": float(data.get("lon") or 0.0),
+                "ip": ip,
+            }
+        except Exception:
+            result = _empty_geo(ip)
     _geo_cache[ip] = result
     return result
 
@@ -669,6 +705,136 @@ def run_cmd(command: list[str]) -> str:
         return result.stdout.strip() or result.stderr.strip()
     except Exception as exc:
         return f"ERROR: {exc}"
+
+
+def run_cmd_result(command: list[str], timeout: int = 8) -> dict:
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=timeout, check=False)
+        return {
+            "ok": result.returncode == 0,
+            "returncode": result.returncode,
+            "stdout": result.stdout.strip(),
+            "stderr": result.stderr.strip(),
+            "command": " ".join(command),
+        }
+    except Exception as exc:
+        return {"ok": False, "returncode": -1, "stdout": "", "stderr": str(exc), "command": " ".join(command)}
+
+
+def _line_has_all(line: str, tokens: list[str]) -> bool:
+    return all(token in line for token in tokens)
+
+
+def _mail_relay_firewall_status() -> dict:
+    host_rules = run_cmd_result(["iptables", "-S", "FORWARD"])
+    pct_rules = run_cmd_result(["pct", "exec", "206", "--", "iptables", "-S", "INPUT"])
+    host_text = f"{host_rules.get('stdout','')}\n{host_rules.get('stderr','')}"
+    pct_text = f"{pct_rules.get('stdout','')}\n{pct_rules.get('stderr','')}"
+
+    checks = {
+        "host_allows_only_mail_pct_25": _line_has_all(
+            host_text,
+            ["-A FORWARD", "-s 10.10.20.206/32", "--dport 25", "-j ACCEPT"],
+        ),
+        "host_blocks_before_mail_pct_range_25": _line_has_all(
+            host_text,
+            ["--src-range 10.10.20.0-10.10.20.205", "--dport 25", "-j REJECT"],
+        ),
+        "host_blocks_after_mail_pct_range_25": _line_has_all(
+            host_text,
+            ["--src-range 10.10.20.207-10.10.20.255", "--dport 25", "-j REJECT"],
+        ),
+        "pct_allows_loopback_25": _line_has_all(
+            pct_text,
+            ["-A INPUT", "-i lo", "--dport 25", "-j ACCEPT"],
+        ),
+        "pct_allows_postal_internal_25": _line_has_all(
+            pct_text,
+            ["-A INPUT", "-s 172.18.0.0/16", "--dport 25", "-j ACCEPT"],
+        ),
+        "pct_blocks_public_25": _line_has_all(
+            pct_text,
+            ["-A INPUT", "--dport 25", "-j DROP"],
+        ),
+    }
+    host_service = run_cmd_result(["systemctl", "is-enabled", MAIL_RELAY_HOST_SERVICE])
+    pct_service = run_cmd_result(["systemctl", "is-enabled", MAIL_RELAY_PCT_SERVICE])
+    return {
+        "ok": all(checks.values()),
+        "checks": checks,
+        "host_service_enabled": host_service.get("stdout") == "enabled",
+        "pct_service_enabled": pct_service.get("stdout") == "enabled",
+        "host_rules_error": "" if host_rules.get("ok") else host_rules.get("stderr"),
+        "pct_rules_error": "" if pct_rules.get("ok") else pct_rules.get("stderr"),
+    }
+
+
+def _mail_relay_postfix_status() -> dict:
+    conf = run_cmd_result(["pct", "exec", "206", "--", "postconf", "-n"])
+    text = conf.get("stdout", "")
+    mynetworks_line = ""
+    relay_line = ""
+    recipient_line = ""
+    for line in text.splitlines():
+        if line.startswith("mynetworks ="):
+            mynetworks_line = line
+        elif line.startswith("smtpd_relay_restrictions ="):
+            relay_line = line
+        elif line.startswith("smtpd_recipient_restrictions ="):
+            recipient_line = line
+    nets = {item.strip() for item in mynetworks_line.split("=", 1)[-1].split(",") if item.strip()} if mynetworks_line else set()
+    return {
+        "ok": (
+            bool(mynetworks_line)
+            and nets == MAIL_RELAY_ALLOWED_POSTFIX_NETS
+            and "reject_unauth_destination" in relay_line
+            and "reject_unauth_destination" in recipient_line
+        ),
+        "mynetworks": sorted(nets),
+        "relay_restrictions": relay_line,
+        "recipient_restrictions": recipient_line,
+        "error": "" if conf.get("ok") else conf.get("stderr"),
+    }
+
+
+def get_mail_relay_guard_status() -> dict:
+    firewall = _mail_relay_firewall_status()
+    postfix = _mail_relay_postfix_status()
+    return {
+        "ok": bool(firewall.get("ok") and postfix.get("ok")),
+        "firewall": firewall,
+        "postfix": postfix,
+        "public_smtp_25_policy": "bloqueado para Internet; permitido sólo al flujo Postal interno",
+        "egress_smtp_25_policy": f"sólo {MAIL_RELAY_ALLOWED_PCT_IP} puede salir a puerto 25",
+        "updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+
+def apply_mail_relay_guard() -> dict:
+    commands = [
+        ["systemctl", "enable", "--now", MAIL_RELAY_HOST_SERVICE],
+        ["systemctl", "enable", "--now", MAIL_RELAY_PCT_SERVICE],
+        [
+            "pct", "exec", "206", "--", "postconf", "-e",
+            "mynetworks = 127.0.0.0/8, 172.18.0.7/32, 172.18.0.4/32, 172.18.0.3/32",
+        ],
+        [
+            "pct", "exec", "206", "--", "postconf", "-e",
+            "smtpd_relay_restrictions = permit_mynetworks, permit_sasl_authenticated, reject_unauth_destination",
+        ],
+        [
+            "pct", "exec", "206", "--", "postconf", "-e",
+            "smtpd_recipient_restrictions = permit_mynetworks, permit_sasl_authenticated, reject_unauth_destination, reject_invalid_hostname, reject_non_fqdn_hostname",
+        ],
+        [
+            "pct", "exec", "206", "--", "postconf", "-e",
+            "smtpd_sender_restrictions = permit_mynetworks, permit_sasl_authenticated, reject_unknown_sender_domain",
+        ],
+        ["pct", "exec", "206", "--", "postfix", "check"],
+        ["pct", "exec", "206", "--", "systemctl", "reload", "postfix"],
+    ]
+    results = [run_cmd_result(command, timeout=20) for command in commands]
+    return {"ok": all(item.get("ok") for item in results), "results": results, "status": get_mail_relay_guard_status()}
 
 
 def _mask_ip(ip: str) -> str:
@@ -1367,6 +1533,7 @@ def get_all_stats() -> dict:
             "enabled": npm_sidecar_config().get("enabled", False),
             "proxy_hosts": npm_get_proxy_hosts(),
         },
+        "mail_relay_guard": get_mail_relay_guard_status(),
         "updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
 
@@ -1493,7 +1660,7 @@ def health():
 
 @app.route("/")
 def index():
-    return render_template("index.html", data=get_all_stats(), config=CONFIG)
+    return render_template("index.html", config=CONFIG)
 
 
 @app.route("/setup", methods=["GET", "POST"])
@@ -1569,6 +1736,292 @@ def api_npm_status():
         "health": health,
         "proxy_hosts": npm_get_proxy_hosts(),
     })
+
+
+@app.route("/api/mail-relay/status")
+@require_api_enabled
+def api_mail_relay_status():
+    """Estado anti open-relay para el servidor de correo Sajet."""
+    return jsonify(get_mail_relay_guard_status())
+
+
+@app.route("/api/mail-relay/apply", methods=["POST"])
+@require_api_enabled
+@require_write_actions
+def api_mail_relay_apply():
+    """Aplica/repara las reglas anti open-relay públicas e internas."""
+    return jsonify(apply_mail_relay_guard())
+
+
+def _month_start() -> str:
+    now = datetime.utcnow()
+    return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _log_lines_from_command(command: list[str], source: str, limit: int = 500, timeout: int = 20) -> list[dict]:
+    result = run_cmd_result(command, timeout=timeout)
+    lines = (result.get("stdout") or result.get("stderr") or "").splitlines()
+    return [{"source": source, "line": line} for line in lines[-limit:] if line.strip()]
+
+
+def get_month_logs(limit: int = 800) -> dict:
+    since = _month_start()
+    sections = []
+    sections.append({
+        "name": "Postfix / Postal PCT 206",
+        "items": _log_lines_from_command(
+            ["pct", "exec", "206", "--", "journalctl", "--since", since, "--no-pager", "-u", "postfix", "-n", str(limit)],
+            "mail-pct206",
+            limit=limit,
+        ),
+    })
+    sections.append({
+        "name": "Mail log PCT 206",
+        "items": _log_lines_from_command(
+            ["pct", "exec", "206", "--", "bash", "-lc", f"grep -h \"$(date +%b)\" /var/log/mail.log /var/log/mail.log.* 2>/dev/null | tail -n {int(limit)}"],
+            "mail-log-pct206",
+            limit=limit,
+        ),
+    })
+    sections.append({
+        "name": "Fail2ban host",
+        "items": _log_lines_from_command(
+            ["journalctl", "--since", since, "--no-pager", "-u", "fail2ban", "-n", str(limit)],
+            "fail2ban-host",
+            limit=limit,
+        ),
+    })
+    sections.append({
+        "name": "Firewall anti open-relay",
+        "items": _log_lines_from_command(
+            [
+                "journalctl",
+                "--since",
+                since,
+                "--no-pager",
+                "-u",
+                MAIL_RELAY_HOST_SERVICE,
+                "-u",
+                MAIL_RELAY_PCT_SERVICE,
+                "-n",
+                str(limit),
+            ],
+            "mail-relay-firewall",
+            limit=limit,
+        ),
+    })
+    total = sum(len(section["items"]) for section in sections)
+    return {
+        "ok": True,
+        "since": since,
+        "limit": limit,
+        "total": total,
+        "sections": sections,
+        "updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+
+@app.route("/api/month-logs")
+@require_api_enabled
+def api_month_logs():
+    try:
+        limit = max(50, min(2000, int(request.args.get("limit", "800"))))
+    except ValueError:
+        limit = 800
+    return jsonify(get_month_logs(limit=limit))
+
+
+def _parse_jail_status(name: str) -> dict:
+    raw = f2b(["status", name])
+    def number(pattern: str) -> int:
+        match = re.search(pattern, raw)
+        return int(match.group(1)) if match else 0
+    banned_line = re.search(r"Banned IP list:\s*(.*)", raw)
+    banned_ips = []
+    if banned_line:
+        banned_ips = [ip for ip in banned_line.group(1).split() if ip]
+    meta = cfg("jail_meta", {}).get(name, DEFAULT_JAIL_META.get(name, {}))
+    return {
+        "name": name,
+        "enabled": "ERROR:" not in raw and "Sorry but the jail" not in raw,
+        "currently_failed": number(r"Currently failed:\s*(\d+)"),
+        "total_failed": number(r"Total failed:\s*(\d+)"),
+        "currently_banned": number(r"Currently banned:\s*(\d+)"),
+        "total_banned": number(r"Total banned:\s*(\d+)"),
+        "banned_ips": banned_ips[:60],
+        "meta": meta,
+    }
+
+
+def get_fail2ban_lite() -> dict:
+    jails = [_parse_jail_status(jail) for jail in cfg("jails", DEFAULT_JAILS)]
+    attempts, top_ports = get_recent_attempts(limit=40)
+    listening_ports = get_listening_ports()
+    summary = {
+        "total_banned": sum(jail.get("currently_banned", 0) for jail in jails),
+        "logged_bans": sum(jail.get("total_banned", 0) for jail in jails),
+        "internet_events": sum(1 for item in attempts if item.get("source_scope") == "internet"),
+        "internal_events": sum(1 for item in attempts if item.get("source_scope") in {"interna", "loopback"}),
+    }
+    return {
+        "ok": True,
+        "summary": summary,
+        "jails": jails,
+        "attack_events": attempts,
+        "top_ports": top_ports,
+        "listening_ports": listening_ports,
+        "updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+
+@app.route("/api/fail2ban-lite")
+@require_api_enabled
+def api_fail2ban_lite():
+    return jsonify(get_fail2ban_lite())
+
+
+def _geo_for_map(ip: str) -> dict:
+    geo = geoip(ip)
+    estimated = False
+    if not geo.get("lat") or not geo.get("lon"):
+        lat, lon = _pseudo_geo_from_ip(ip)
+        geo = {**geo, "lat": lat, "lon": lon}
+        estimated = True
+    source = "ipinfo" if feature_enabled("external_enrichment") and not estimated else "estimado"
+    return {**geo, "estimated": estimated, "source": source}
+
+
+def _dsam_enrichment_for_ips(ips: list[str]) -> dict[str, dict]:
+    """Best-effort DSAM bridge. Never blocks the local security dashboard."""
+    base = os.getenv("FAIL2BAN_UI_DSAM_URL", "").rstrip("/")
+    token = os.getenv("FAIL2BAN_UI_DSAM_TOKEN", "")
+    if not base or not ips:
+        return {}
+    try:
+        payload = json.dumps({"ips": ips[:250], "source": "fail2ban-ui"}).encode("utf-8")
+        headers = {"Content-Type": "application/json", "User-Agent": "fail2ban-ui/1.0"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        req = urllib.request.Request(f"{base}/api/dsam/fail2ban/enrich", data=payload, headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            data = json.loads(resp.read())
+        items = data.get("data") or data.get("items") or []
+        return {str(item.get("ip")): item for item in items if item.get("ip")}
+    except Exception:
+        return {}
+
+
+def get_enriched_blocked_ips(limit: int = 250) -> dict:
+    jails = [_parse_jail_status(jail) for jail in cfg("jails", DEFAULT_JAILS)]
+    attempts, top_ports = get_recent_attempts(limit=120)
+    attempts_by_ip: dict[str, list[dict]] = {}
+    for item in attempts:
+        ip = item.get("source_ip")
+        if ip:
+            attempts_by_ip.setdefault(ip, []).append(item)
+    by_ip: dict[str, dict] = {}
+    for jail in jails:
+        jail_name = jail.get("name")
+        for ip in jail.get("banned_ips", []):
+            by_ip.setdefault(
+                ip,
+                {
+                    "ip": ip,
+                    "display_ip": _mask_ip(ip),
+                    "jails": [],
+                    "currently_banned": True,
+                    "events": [],
+                },
+            )
+            by_ip[ip]["jails"].append(jail_name)
+    for ip, items in attempts_by_ip.items():
+        by_ip.setdefault(
+            ip,
+            {
+                "ip": ip,
+                "display_ip": _mask_ip(ip),
+                "jails": [],
+                "currently_banned": False,
+                "events": [],
+            },
+        )
+        by_ip[ip]["events"].extend(items[:12])
+
+    dsam = _dsam_enrichment_for_ips(list(by_ip.keys()))
+    enriched = []
+    for ip, item in list(by_ip.items())[:limit]:
+        geo = _geo_for_map(ip)
+        dsam_item = dsam.get(ip) or {}
+        if dsam_item.get("geo"):
+            dsam_geo = dsam_item["geo"] or {}
+            geo = {
+                **geo,
+                "country": dsam_geo.get("country") or geo.get("country"),
+                "city": dsam_geo.get("city") or geo.get("city"),
+                "region": dsam_geo.get("region") or geo.get("region"),
+                "lat": dsam_geo.get("lat") or geo.get("lat"),
+                "lon": dsam_geo.get("lon") or geo.get("lon"),
+                "source": "dsam",
+                "estimated": False,
+            }
+        item_events = item.get("events", [])
+        enriched.append(
+            {
+                **item,
+                "country": geo.get("country"),
+                "city": geo.get("city"),
+                "region": geo.get("region"),
+                "org": geo.get("org"),
+                "lat": geo.get("lat"),
+                "lon": geo.get("lon"),
+                "geo_source": geo.get("source"),
+                "estimated": geo.get("estimated", False),
+                "risk_level": dsam_item.get("risk_level") or ("high" if item.get("currently_banned") else "medium"),
+                "risk_score": dsam_item.get("risk_score") or (90 if item.get("currently_banned") else 55),
+                "tenant": dsam_item.get("tenant"),
+                "case_id": dsam_item.get("case_id"),
+                "last_event": item_events[0] if item_events else None,
+                "event_count": len(item_events),
+            }
+        )
+    enriched.sort(key=lambda x: (not x.get("currently_banned"), -(x.get("risk_score") or 0), x.get("ip") or ""))
+    map_points = [
+        {
+            "ip": item["ip"],
+            "display_ip": item["display_ip"],
+            "lat": item.get("lat"),
+            "lon": item.get("lon"),
+            "country": item.get("country"),
+            "city": item.get("city"),
+            "risk_level": item.get("risk_level"),
+            "risk_score": item.get("risk_score"),
+            "banned": item.get("currently_banned"),
+            "estimated": item.get("estimated"),
+            "geo_source": item.get("geo_source"),
+            "jails": item.get("jails", []),
+        }
+        for item in enriched
+        if item.get("lat") and item.get("lon")
+    ]
+    return {
+        "ok": True,
+        "items": enriched,
+        "map_points": map_points,
+        "jails": jails,
+        "top_ports": top_ports,
+        "dsam": {"enabled": bool(os.getenv("FAIL2BAN_UI_DSAM_URL", "")), "matched": len(dsam)},
+        "updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+
+@app.route("/api/enriched-blocked-ips")
+@require_api_enabled
+def api_enriched_blocked_ips():
+    try:
+        limit = max(20, min(500, int(request.args.get("limit", "250"))))
+    except ValueError:
+        limit = 250
+    return jsonify(get_enriched_blocked_ips(limit=limit))
 
 
 @app.route("/api/shodan/<ip>")

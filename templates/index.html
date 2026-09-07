@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>{{ data.app.name }} - {{ data.server.name }}</title>
+  <title>{{ config.app_name or 'Fail2ban UI' }} · Dashboard</title>
   <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
   <style>
     :root {
@@ -18,667 +18,628 @@
       --amber: #ffd166;
       --green: #3cf5a6;
       --blue: #45d5ff;
-      --violet: #c69cff;
-      --glow: 0 0 0 1px rgba(69, 213, 255, .15), 0 0 18px rgba(69, 213, 255, .12);
+      --shadow: 0 0 0 1px rgba(69,213,255,.13), 0 18px 50px rgba(0,0,0,.28);
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
       background:
-        radial-gradient(1200px 600px at 85% -10%, rgba(69, 213, 255, .10), transparent),
-        radial-gradient(900px 400px at -10% 0%, rgba(198, 156, 255, .08), transparent),
+        radial-gradient(900px 420px at 92% -10%, rgba(69, 213, 255, .12), transparent),
+        radial-gradient(760px 360px at -10% 0%, rgba(60, 245, 166, .08), transparent),
         var(--bg);
       color: var(--text);
-      font: 14px/1.45 system-ui, -apple-system, Segoe UI, sans-serif;
+      font: 14px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
-    a { color: inherit; }
-    .shell { max-width: 1360px; margin: 0 auto; padding: 22px; }
-    .topbar { display: flex; justify-content: space-between; gap: 18px; align-items: center; margin-bottom: 18px; }
-    .brand h1 { margin: 0; font-size: 24px; letter-spacing: .4px; text-shadow: 0 0 14px rgba(69, 213, 255, .25); }
+    .layout { display: grid; grid-template-columns: 250px minmax(0, 1fr); min-height: 100vh; }
+    .sidebar {
+      border-right: 1px solid var(--line);
+      background: rgba(8, 15, 24, .86);
+      padding: 18px;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+    }
+    .logo { display: flex; align-items: center; gap: 10px; margin-bottom: 22px; }
+    .logo-mark { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; background: linear-gradient(135deg, #0d7f5c, #114c8f); font-weight: 900; }
+    .logo h1 { font-size: 17px; margin: 0; }
+    .logo p { margin: 1px 0 0; color: var(--muted); font-size: 12px; }
+    .nav { display: grid; gap: 8px; }
+    .nav button, .nav a {
+      text-align: left;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--muted);
+      border-radius: 10px;
+      padding: 10px 11px;
+      cursor: pointer;
+      text-decoration: none;
+    }
+    .nav button.active, .nav button:hover, .nav a:hover {
+      color: var(--text);
+      border-color: var(--line);
+      background: rgba(18, 32, 51, .88);
+    }
+    .content { padding: 22px; max-width: 1320px; width: 100%; }
+    .topbar { display: flex; justify-content: space-between; gap: 14px; align-items: center; margin-bottom: 16px; }
+    .brand h2 { margin: 0; font-size: 25px; letter-spacing: .2px; }
     .brand p { margin: 4px 0 0; color: var(--muted); }
     .actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
-    .btn { border: 1px solid var(--line); background: var(--panel-2); color: var(--text); padding: 9px 12px; border-radius: 6px; cursor: pointer; text-decoration: none; box-shadow: var(--glow); }
-    .btn:hover { border-color: var(--blue); box-shadow: 0 0 0 1px rgba(69,213,255,.2), 0 0 18px rgba(69,213,255,.25); }
+    .btn {
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, #16304b, #101c2c);
+      color: var(--text);
+      padding: 9px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      text-decoration: none;
+    }
+    .btn:hover { border-color: var(--blue); }
+    .btn.primary { background: linear-gradient(135deg, #0d7f5c, #114c8f); border-color: rgba(69,213,255,.4); }
     .grid { display: grid; gap: 14px; }
-    .metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 14px; }
-    .two { grid-template-columns: minmax(0, 1.2fr) minmax(360px, .8fr); }
-    .card { background: linear-gradient(180deg, rgba(18,32,51,.88), rgba(10,18,29,.95)); border: 1px solid var(--line); border-radius: 10px; padding: 16px; box-shadow: var(--glow); }
-    .card h2, .card h3 { margin: 0 0 12px; font-size: 16px; }
-    .metric .value { font-size: 34px; font-weight: 800; text-shadow: 0 0 12px rgba(69,213,255,.2); }
-    .metric .label { color: var(--muted); }
-    .posture { border: 1px solid #2f567e; background: linear-gradient(145deg, rgba(12,24,38,.98), rgba(7,14,23,.96)); }
-    .posture-grid { display: grid; grid-template-columns: 120px 1fr; gap: 14px; align-items: center; }
-    .posture-score {
-      width: 110px;
-      height: 110px;
-      border-radius: 50%;
-      display: grid;
-      place-items: center;
-      font-size: 30px;
-      font-weight: 900;
-      border: 1px solid #2f567e;
-      background: radial-gradient(circle at 30% 30%, rgba(69,213,255,.25), rgba(0,0,0,.2));
-      box-shadow: 0 0 20px rgba(69,213,255,.25);
-    }
-    .posture-list { margin: 8px 0 0; padding-left: 18px; color: var(--muted); }
-    .posture-list li { margin-bottom: 4px; }
-    .red { color: var(--red); } .amber { color: var(--amber); } .green { color: var(--green); } .blue { color: var(--blue); }
-    .badge { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px; padding: 3px 8px; color: var(--muted); font-size: 12px; }
-    .badge.danger { color: #ffc9c9; border-color: #7f3030; background: #2a1618; }
-    .badge.warn { color: #ffe1a6; border-color: #7a5c20; background: #2b2415; }
-    .badge.ok { color: #bdf4d5; border-color: #2c6844; background: #13241b; }
-    .section-title { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 12px; }
-    .jail { display: grid; grid-template-columns: minmax(180px, .8fr) minmax(0, 1.2fr); gap: 12px; align-items: start; }
-    .jail + .jail { border-top: 1px solid var(--line); padding-top: 14px; margin-top: 14px; }
-    .jail-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-    .jail-title strong { font-size: 16px; }
-    .jail-desc { margin: 6px 0 0; color: var(--muted); }
-    .stats-row { display: flex; gap: 14px; flex-wrap: wrap; color: var(--muted); }
-    .chip-row { display: flex; gap: 7px; flex-wrap: wrap; margin-top: 10px; }
-    .chip { display: inline-flex; gap: 6px; align-items: center; border: 1px solid var(--line); background: #11161b; border-radius: 6px; padding: 4px 8px; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
-    .chip button { border: 0; background: #5f1d25; color: white; border-radius: 4px; padding: 1px 6px; cursor: pointer; }
-    .chip.ip-chip { cursor: pointer; border-color: #2b5f8f; box-shadow: 0 0 12px rgba(69,213,255,.14); }
-    .chip.ip-chip:hover { border-color: var(--blue); }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { border-bottom: 1px solid var(--line); padding: 9px 8px; text-align: left; vertical-align: top; }
-    th { color: var(--muted); font-size: 12px; text-transform: uppercase; }
-    tbody tr:hover { background: #1b232b; }
-    input { width: 100%; background: #11161b; border: 1px solid var(--line); color: var(--text); border-radius: 6px; padding: 9px 10px; }
-    .toolbar { display: flex; gap: 8px; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-    .toolbar input { max-width: 320px; }
-    .port-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
-    .port { border: 1px solid var(--line); background: #11161b; border-radius: 7px; padding: 10px; }
-    .port.public { border-color: #7f3030; } .port.tailscale { border-color: #2c6844; } .port.interna { border-color: #2f5682; }
-    .port strong { font-size: 20px; }
-    .map-wrap { border: 1px solid var(--line); background: #0f141a; border-radius: 8px; overflow: hidden; }
-    #events-map-leaflet { width: 100%; height: 460px; }
-    .map-header { display: flex; justify-content: space-between; gap: 10px; align-items: center; margin-bottom: 10px; }
-    .map-legend { display: flex; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
-    .map-meta { color: var(--muted); font-size: 12px; margin-top: 8px; }
-    .legend-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 4px; }
-    .legend-dot.red { background: var(--red); }
-    .legend-dot.amber { background: var(--amber); }
-    .legend-dot.blue { background: var(--blue); }
-    .legend-dot.violet { background: var(--violet); }
-    .world-land { fill: #14263b; stroke: #2b4c6f; stroke-width: 1; opacity: .95; }
-    .world-coast { fill: none; stroke: #3d79a8; stroke-width: .8; opacity: .55; }
-    .map-empty { padding: 10px 0; }
-    .muted { color: var(--muted); }
-    .empty { color: var(--muted); font-style: italic; }
-    .pagination { display: flex; justify-content: space-between; gap: 10px; align-items: center; margin-top: 12px; }
-    .pagination-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-    .page-btn { border: 1px solid var(--line); background: var(--panel-2); color: var(--text); border-radius: 5px; padding: 6px 9px; cursor: pointer; }
-    .page-btn.active { border-color: var(--blue); background: #18314a; }
-    .decision { border-left: 3px solid var(--amber); padding-left: 10px; }
-    .decision.critical { border-color: var(--red); }
-    .wl-form { display: flex; gap: 8px; margin-bottom: 10px; }
-    .hidden { display: none; }
-    .intel-panel {
-      position: fixed;
-      top: 0;
-      right: 0;
-      width: min(460px, 95vw);
-      height: 100vh;
-      z-index: 1000;
-      background: linear-gradient(180deg, rgba(8,15,24,.98), rgba(10,18,29,.99));
-      border-left: 1px solid #285178;
-      box-shadow: -8px 0 28px rgba(0,0,0,.45);
+    .metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .cards3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .two { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+    .card {
+      background: linear-gradient(180deg, rgba(18, 32, 51, .9), rgba(10, 18, 29, .97));
+      border: 1px solid var(--line);
+      border-radius: 14px;
       padding: 16px;
-      overflow: auto;
-      transform: translateX(0);
-      transition: transform .2s ease;
+      box-shadow: var(--shadow);
     }
-    .intel-panel.hidden { display: block; transform: translateX(110%); }
-    .intel-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
-    .intel-code { white-space: pre-wrap; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; color: #a6c2db; }
-    @media (max-width: 860px) {
-      .shell { padding: 14px; }
-      .topbar, .section-title, .toolbar { align-items: stretch; flex-direction: column; }
-      .metrics, .two { grid-template-columns: 1fr; }
-      .jail { grid-template-columns: 1fr; }
-      .actions { justify-content: flex-start; }
-      th:nth-child(4), td:nth-child(4), th:nth-child(7), td:nth-child(7) { display: none; }
+    h3 { margin: 0 0 12px; }
+    .muted { color: var(--muted); }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 4px 9px;
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .badge.ok { color: #bdf4d5; border-color: #2c6844; background: #13241b; }
+    .badge.warn { color: #ffe1a6; border-color: #7a5c20; background: #2b2415; }
+    .badge.danger { color: #ffc9c9; border-color: #7f3030; background: #2a1618; }
+    .metric { font-size: 32px; font-weight: 850; margin: 4px 0; }
+    .green { color: var(--green); } .red { color: var(--red); } .amber { color: var(--amber); } .blue { color: var(--blue); }
+    .row { display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+    .chips { display: flex; gap: 7px; flex-wrap: wrap; }
+    .chip { display: inline-flex; gap: 6px; align-items: center; border: 1px solid var(--line); background: #11161b; border-radius: 7px; padding: 5px 8px; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: #bdd5eb; }
+    .checks { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+    .checks li { display: flex; justify-content: space-between; gap: 10px; border-bottom: 1px solid rgba(31,58,88,.6); padding-bottom: 8px; }
+    .section { display: none; }
+    .section.active { display: block; }
+    .jail { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 12px; }
+    .jail:first-child { border-top: 0; padding-top: 0; margin-top: 0; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border-bottom: 1px solid var(--line); padding: 8px; text-align: left; vertical-align: top; }
+    th { color: var(--muted); font-size: 12px; text-transform: uppercase; }
+    .logs-toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+    input, select { background: #11161b; border: 1px solid var(--line); color: var(--text); border-radius: 8px; padding: 9px 10px; }
+    input { min-width: min(100%, 360px); flex: 1; }
+    .log-section { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 12px; }
+    .log-lines { max-height: 520px; overflow: auto; border: 1px solid #152a41; background: #05080d; border-radius: 10px; padding: 10px; }
+    .log-line { white-space: pre-wrap; word-break: break-word; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; color: #c2d6ea; padding: 4px 0; border-bottom: 1px solid rgba(31,58,88,.35); }
+    .map-wrap { position: relative; border: 1px solid var(--line); background: #05080d; border-radius: 12px; overflow: hidden; min-height: 430px; }
+    #blocked-map { height: 520px; width: 100%; background: radial-gradient(circle at 50% 50%, #142033 0, #08111d 72%); }
+    #blocked-map .leaflet-container, .leaflet-container { background: radial-gradient(circle at 50% 50%, #142033 0, #08111d 72%); }
+    .map-fallback {
+      position: absolute;
+      inset: 0;
+      z-index: 650;
+      pointer-events: none;
+      opacity: .92;
+    }
+    .map-fallback .fallback-dot {
+      position: absolute;
+      width: 12px;
+      height: 12px;
+      margin: -6px 0 0 -6px;
+      border-radius: 50%;
+      background: #ff2f5f;
+      border: 1px solid rgba(8, 11, 18, .9);
+      box-shadow: 0 0 0 2px rgba(255, 47, 95, .18), 0 0 18px rgba(255, 47, 95, .45);
+    }
+    .map-fallback .fallback-dot.medium { background: #ffd166; box-shadow: 0 0 0 2px rgba(255, 209, 102, .18), 0 0 18px rgba(255, 209, 102, .35); }
+    .map-fallback .fallback-dot.low { background: #45d5ff; box-shadow: 0 0 0 2px rgba(69, 213, 255, .18), 0 0 18px rgba(69, 213, 255, .35); }
+    .ip-card { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 12px; display: grid; gap: 8px; }
+    .ip-card:first-child { border-top: 0; margin-top: 0; padding-top: 0; }
+    .risk-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; background: var(--amber); }
+    .filterbar { display: grid; grid-template-columns: minmax(220px, 1fr) repeat(3, minmax(130px, 180px)); gap: 8px; margin-bottom: 14px; }
+    .attacker-red { color: #ffc2cc; border-color: #ff5a7a; background: rgba(255,90,122,.13); }
+    .risk-dot.high, .risk-dot.critical { background: var(--red); }
+    .risk-dot.medium { background: var(--amber); }
+    .risk-dot.low { background: var(--green); }
+    .hidden { display: none !important; }
+    .toast { position: fixed; right: 18px; bottom: 18px; max-width: min(520px, calc(100vw - 36px)); background: #101c2c; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; box-shadow: var(--shadow); color: var(--text); z-index: 10; }
+    @media (max-width: 900px) {
+      .layout { grid-template-columns: 1fr; }
+      .sidebar { position: static; height: auto; }
+      .content { padding: 14px; }
+      .metrics, .cards3, .two { grid-template-columns: 1fr; }
+      .topbar { align-items: stretch; flex-direction: column; }
     }
   </style>
 </head>
 <body>
-  <main class="shell">
-    <header class="topbar">
-      <div class="brand">
-        <h1>{{ data.app.name }}</h1>
-        <p>{{ data.server.name }} · IP {{ data.server.public_ip or 'no definida' }} · actualizado {{ data.updated }}</p>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="logo">
+        <div class="logo-mark">F2</div>
+        <div>
+          <h1>Fail2ban UI</h1>
+          <p>miami-pve · puerto 8020</p>
+        </div>
       </div>
-      <nav class="actions">
-        {% if data.features.swagger_enabled %}<a class="btn" href="/api/docs">API</a>{% endif %}
-        <a class="btn" href="/settings">Ajustes</a>
-        <button class="btn" onclick="location.reload()">Actualizar</button>
+      <nav class="nav">
+        <button class="active" data-view="dashboard" onclick="showView('dashboard')">Dashboard</button>
+        <button data-view="jails" onclick="showView('jails')">Fail2ban / Jails</button>
+        <button data-view="blocked" onclick="showView('blocked')">IPs bloqueadas + mapa</button>
+        <button data-view="relay" onclick="showView('relay')">Anti open-relay</button>
+        <button data-view="logs" onclick="showView('logs')">Logs del mes</button>
+        <button data-view="ports" onclick="showView('ports')">Puertos</button>
+        <a href="/settings">Ajustes</a>
+        {% if config.features.swagger_enabled %}<a href="/api/docs">API</a>{% endif %}
       </nav>
-    </header>
+    </aside>
 
-    <section class="grid metrics">
-      <article class="card metric"><div class="value red">{{ data.summary.total_banned }}</div><div class="label">baneadas ahora</div></article>
-      <article class="card metric"><div class="value amber">{{ data.summary.logged_bans }}</div><div class="label">baneos registrados</div></article>
-      <article class="card metric"><div class="value blue">{{ data.summary.internet_events }}</div><div class="label">ataques internet</div></article>
-      <article class="card metric"><div class="value green">{{ data.summary.internal_events }}</div><div class="label">ataques internos</div></article>
-    </section>
+    <main class="content">
+      <header class="topbar">
+        <div class="brand">
+          <h2 id="page-title">Dashboard</h2>
+          <p id="page-subtitle">Carga rápida con módulos asíncronos.</p>
+        </div>
+        <div class="actions">
+          <button class="btn" onclick="loadAll()">Actualizar todo</button>
+          <button class="btn primary" onclick="applyGuard()">Reaplicar anti-relay</button>
+        </div>
+      </header>
 
-    <section class="card posture" style="margin-bottom:14px">
-      <div class="section-title">
-        <h2>Postura de seguridad del servidor</h2>
-        <span class="badge {{ data.security_posture.tone }}">nivel {{ data.security_posture.level }}</span>
-      </div>
-      <div class="posture-grid">
-        <div class="posture-score">{{ data.security_posture.score }}</div>
-        <div>
-          <div class="muted">Score de endurecimiento operativo (0-100)</div>
-          <div class="stats-row" style="margin-top:6px">
-            <span>WAN <strong class="amber">{{ data.port_monitor.public_total }}</strong> puertos</span>
-            <span>Riesgo alto <strong class="red">{{ data.port_monitor.high_risk_public|length }}</strong></span>
-            <span>Protección IP host <strong class="green">{{ 'activa' if '216.106.182.26/32' in data.protected_whitelist else 'pendiente' }}</strong></span>
-          </div>
-        </div>
-      </div>
-      <div class="grid two" style="margin-top:12px; grid-template-columns: 1fr 1fr;">
-        <div>
-          <h3>Hallazgos</h3>
-          <ul class="posture-list">
-            {% for finding in data.security_posture.findings %}
-            <li>{{ finding }}</li>
-            {% endfor %}
-            {% if not data.security_posture.findings %}<li>Sin hallazgos críticos en esta revisión.</li>{% endif %}
-          </ul>
-        </div>
-        <div>
-          <h3>Recomendaciones</h3>
-          <ul class="posture-list">
-            {% for rec in data.security_posture.recommendations %}
-            <li>{{ rec }}</li>
-            {% endfor %}
-          </ul>
-        </div>
-      </div>
-    </section>
+      <section class="filterbar">
+        <input id="global-filter" placeholder="Filtro global: IP, país, jail, puerto, servicio..." oninput="applyAllFilters()">
+        <select id="risk-filter" onchange="applyAllFilters()">
+          <option value="all">Todos los riesgos</option>
+          <option value="critical,high">Sólo atacantes rojos</option>
+          <option value="medium">Medio</option>
+          <option value="low">Bajo</option>
+        </select>
+        <select id="status-filter" onchange="applyAllFilters()">
+          <option value="all">Todos los estados</option>
+          <option value="banned">Baneadas</option>
+          <option value="observed">Observadas</option>
+        </select>
+        <select id="view-limit" onchange="applyAllFilters()">
+          <option value="50">50 visibles</option>
+          <option value="100" selected>100 visibles</option>
+          <option value="200">200 visibles</option>
+        </select>
+      </section>
 
-    <section class="grid two">
-      <article class="card">
-        <div class="section-title">
-          <h2>Jails</h2>
-          <span class="badge {% if data.features.write_actions %}ok{% else %}warn{% endif %}">
-            acciones {{ 'activas' if data.features.write_actions else 'solo lectura' }}
-          </span>
+      <section id="view-dashboard" class="section active">
+        <div class="grid metrics">
+          <article class="card"><h3>Baneadas ahora</h3><div id="m-banned" class="metric red">--</div><p class="muted">Fail2ban activo</p></article>
+          <article class="card"><h3>Baneos registrados</h3><div id="m-logged" class="metric amber">--</div><p class="muted">Histórico visible</p></article>
+          <article class="card"><h3>Ataques internet</h3><div id="m-internet" class="metric blue">--</div><p class="muted">Eventos WAN</p></article>
+          <article class="card"><h3>Anti open-relay</h3><div id="m-relay" class="metric amber">--</div><p id="m-relay-text" class="muted">Cargando...</p></article>
         </div>
-        {% for jail in data.jails %}
-        <div class="jail">
-          <div>
-            <div class="jail-title">
-              <strong>{{ jail.meta.title }}</strong>
-              <span class="badge {% if jail.meta.tone in ['danger','critical'] %}danger{% elif jail.meta.tone == 'warning' %}warn{% else %}ok{% endif %}">{{ jail.meta.policy }}</span>
-              {% if not jail.enabled %}<span class="badge warn">no encontrado</span>{% endif %}
+        <div class="grid two" style="margin-top:14px">
+          <article class="card">
+            <div class="row"><h3>Resumen Fail2ban</h3><span id="stats-badge" class="badge warn">cargando</span></div>
+            <div id="dashboard-jails"></div>
+          </article>
+          <article class="card">
+            <div class="row"><h3>Actividad reciente</h3><span id="attempts-badge" class="badge warn">cargando</span></div>
+            <div style="overflow:auto"><table><thead><tr><th>Hora</th><th>IP</th><th>Tipo</th><th>Detalle</th></tr></thead><tbody id="recent-attempts"></tbody></table></div>
+          </article>
+        </div>
+      </section>
+
+      <section id="view-jails" class="section">
+        <article class="card">
+          <div class="row"><h3>Fail2ban / Jails</h3><button class="btn" onclick="loadStats()">Recargar</button></div>
+          <div id="jails-list"></div>
+        </article>
+      </section>
+
+
+
+      <section id="view-blocked" class="section">
+        <div class="grid two">
+          <article class="card">
+            <div class="row"><h3>Mapa de IPs bloqueadas/enriquecidas</h3><span id="blocked-badge" class="badge warn">cargando</span></div>
+            <p id="blocked-meta" class="muted">La telemetría DSAM es opcional; si falla se usa GeoIP local/estimado.</p>
+            <div class="map-wrap">
+              <div id="blocked-map"></div>
+              <div id="blocked-map-fallback" class="map-fallback" aria-hidden="true"></div>
             </div>
-            <p class="jail-desc">{{ jail.meta.description }}</p>
-          </div>
-          <div>
-            <div class="stats-row">
-              <span>fallidos <strong class="amber">{{ jail.currently_failed }}</strong></span>
-              <span>baneadas <strong class="red">{{ jail.currently_banned }}</strong></span>
-              <span>historico <strong>{{ jail.total_banned }}</strong></span>
+          </article>
+          <article class="card">
+            <div class="row">
+              <h3>IPs bloqueadas enriquecidas</h3>
+              <button class="btn" onclick="loadBlockedIps()">Recargar</button>
             </div>
-            {% if jail.banned_ips_geo %}
-            <div class="chip-row">
-              {% for ip in jail.banned_ips_geo %}
-              <span class="chip ip-chip" title="{{ ip.org }}" onclick="openIntel('{{ ip.ip }}')">{{ ip.display_ip }}
-                {% if data.features.write_actions %}<button onclick="event.stopPropagation(); unban('{{ ip.ip }}')">x</button>{% endif %}
-              </span>
-              {% endfor %}
+            <div class="logs-toolbar">
+              <input id="blocked-filter" placeholder="Filtrar por IP, país, jail, riesgo..." oninput="renderBlockedIps()">
             </div>
-            {% else %}
-            <p class="empty">Sin IPs baneadas actualmente.</p>
-            {% endif %}
+            <div id="blocked-list"></div>
+          </article>
+        </div>
+      </section>
+
+      <section id="view-relay" class="section">
+        <div class="grid cards3">
+          <article class="card"><h3>Estado</h3><span id="guard-badge" class="badge warn">cargando</span><div id="guard-state" class="metric amber">--</div><p id="guard-updated" class="muted">Consultando...</p></article>
+          <article class="card"><h3>SMTP público/25</h3><div id="public-25" class="metric amber">--</div><p class="muted">Internet no debe poder usar relay.</p></article>
+          <article class="card"><h3>Salida SMTP/25</h3><div id="egress-25" class="metric amber">--</div><p class="muted">Sólo PCT 206 debe enviar SMTP directo.</p></article>
+        </div>
+        <article class="card" style="margin-top:14px">
+          <div class="row"><h3>Bloqueos activos</h3><button class="btn primary" onclick="applyGuard()">Reaplicar bloqueo</button></div>
+          <p id="guard-summary" class="muted">Cargando política...</p>
+          <ul id="guard-checks" class="checks"></ul>
+          <h3 style="margin-top:14px">Postfix mynetworks permitido</h3>
+          <div id="postfix-networks" class="chips"></div>
+        </article>
+      </section>
+
+      <section id="view-logs" class="section">
+        <article class="card">
+          <div class="row"><h3>Logs del mes</h3><span id="logs-badge" class="badge warn">cargando</span></div>
+          <div class="logs-toolbar">
+            <input id="log-filter" placeholder="Filtrar logs por texto, correo, IP, servicio..." oninput="renderLogs()">
+            <select id="log-limit" onchange="loadLogs()">
+              <option value="300">300</option>
+              <option value="800" selected>800</option>
+              <option value="1500">1500</option>
+              <option value="2000">2000</option>
+            </select>
+            <button class="btn" onclick="loadLogs()">Recargar logs</button>
           </div>
-        </div>
-        {% endfor %}
-      </article>
+          <p id="logs-meta" class="muted">Cargando en segundo plano...</p>
+          <div id="logs-container"></div>
+        </article>
+      </section>
 
-      <aside class="card">
-        <div class="section-title">
-          <h2>Decisiones y Notch</h2>
-          <span class="badge {% if config.notch.enabled %}ok{% else %}warn{% endif %}">Notch {{ 'activo' if config.notch.enabled else 'apagado' }}</span>
-        </div>
-        
-        {% if data.webhook_events %}
-          <div style="margin-bottom:12px; padding:8px; background:#0a0e12; border-left:3px solid #45d5ff; border-radius:4px">
-            <div class="muted" style="font-size:12px; margin-bottom:4px">📩 Webhooks recibidos</div>
-            {% for evt in data.webhook_events|reverse %}
-              {% set badge_color = 'danger' if evt.severity == 'critical' else 'warn' if evt.severity == 'warning' else 'ok' %}
-              <div style="font-size:12px; margin:3px 0">
-                <span class="badge {{ badge_color }}">{{ evt.severity }}</span>
-                <span class="chip ip-chip" onclick="openIntel('{{ evt.source_ip }}')">{{ evt.source_ip }}</span>
-                <span class="muted">{{ evt.action }} · {{ evt.hits }} eventos</span>
-              </div>
-            {% endfor %}
-          </div>
-        {% endif %}
-        
-        {% if data.decisions %}
-          {% for item in data.decisions %}
-          <div class="decision {{ item.severity }}">
-            <strong>{{ item.display_ip }}</strong>
-            <div class="muted">{{ item.reason }} · {{ item.action }} · {{ item.action_result }}</div>
-          </div>
-          {% endfor %}
-        {% else %}
-          <p class="empty">No hay decisiones pendientes con las reglas actuales.</p>
-        {% endif %}
-      </aside>
-    </section>
+      <section id="view-ports" class="section">
+        <article class="card">
+          <div class="row"><h3>Puertos escuchando</h3><span id="ports-badge" class="badge warn">cargando</span></div>
+          <div id="ports-list" class="grid cards3"></div>
+        </article>
+      </section>
+    </main>
+  </div>
 
-    <section class="grid two" style="margin-top:14px">
-      <article class="card">
-        <div class="section-title">
-          <h2>Feed de ataques (WAN + LAN)</h2>
-          <span class="badge">{{ data.attack_events|length }} registros</span>
-        </div>
-        <div class="toolbar">
-          <input id="filter-input" placeholder="Filtrar por IP, puerto o tipo" oninput="filterTable()">
-          <label class="badge" style="cursor:pointer; gap:8px"><input id="internet-only" type="checkbox" checked onchange="filterTable()"> solo internet</label>
-          <span class="muted" id="page-info"></span>
-        </div>
-        <div style="overflow:auto">
-          <table>
-            <thead><tr><th>Hora</th><th>IP</th><th>Origen</th><th>Puerto</th><th>Tipo</th><th>Estado</th><th>Detalle</th></tr></thead>
-            <tbody id="attempts-body">
-              {% for item in data.attack_events %}
-              <tr data-scope="{{ item.source_scope }}" data-text="{{ item.display_ip }} {{ item.target_port }} {{ item.kind }} {{ item.detail }} {{ item.source_scope }}">
-                <td class="muted">{{ item.at }}</td>
-                <td><span class="chip ip-chip" onclick="openIntel('{{ item.source_ip }}')">{{ item.display_ip }}</span></td>
-                <td>
-                  {% if item.source_scope == 'internet' %}<span class="badge danger">internet</span>
-                  {% elif item.source_scope in ['interna','loopback'] %}<span class="badge ok">interna</span>
-                  {% else %}<span class="badge warn">{{ item.source_scope }}</span>{% endif %}
-                </td>
-                <td>{{ item.target_port }}/{{ item.protocol }}</td>
-                <td>{{ item.kind }}</td>
-                <td>
-                  {% if item.kind == 'f2b-ban' %}<span class="badge danger">baneada</span>
-                  {% elif item.kind == 'f2b-unban' %}<span class="badge ok">desbaneada</span>
-                  {% elif item.malicious %}<span class="badge danger">maliciosa</span>
-                  {% else %}<span class="badge ok">observada</span>{% endif %}
-                </td>
-                <td class="muted">{{ item.detail }}</td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-        <div class="pagination"><span id="count-label" class="muted"></span><div id="pagination-controls"></div></div>
-      </article>
-
-      <aside class="card">
-        <div class="section-title">
-          <h2>Puertos escuchando (TCP + UDP)</h2>
-          <span class="badge {% if data.port_monitor.public_total > 0 %}warn{% else %}ok{% endif %}">{{ data.port_monitor.public_total }} publicos</span>
-        </div>
-        <div class="stats-row" style="margin-bottom:10px">
-          <span>Total <strong>{{ data.port_monitor.total }}</strong></span>
-          <span>TCP <strong class="blue">{{ data.port_monitor.tcp_total }}</strong></span>
-          <span>UDP <strong class="amber">{{ data.port_monitor.udp_total }}</strong></span>
-        </div>
-        {% if data.port_monitor.high_risk_public %}
-        <p class="muted" style="margin:0 0 8px">Riesgo alto en WAN:</p>
-        <div class="chip-row" style="margin-bottom:12px">
-          {% for p in data.port_monitor.high_risk_public %}
-          <span class="chip">{{ p.port }}/{{ p.protocol }} · {{ p.host }}</span>
-          {% endfor %}
-        </div>
-        {% endif %}
-        {% if data.listening_ports %}
-        <div class="port-grid">
-          {% for item in data.listening_ports %}
-          <div class="port {{ item.exposure }}">
-            <strong>:{{ item.port }}/{{ item.protocol }}</strong>
-            <div class="muted">{{ item.exposure }} · riesgo {{ item.risk }}</div>
-            <div class="muted">{{ item.host }}</div>
-            <div>{{ item.process[:70] }}</div>
-          </div>
-          {% endfor %}
-        </div>
-        {% else %}
-        <p class="empty">Inventario de puertos apagado.</p>
-        {% endif %}
-      </aside>
-    </section>
-
-    <section class="grid two" style="margin-top:14px">
-      <article class="card">
-        <div class="map-header">
-          <h2>Mapa de eventos</h2>
-          <span class="badge">{{ data.map_points|length }} puntos</span>
-        </div>
-        <div class="map-legend">
-          <span><span class="legend-dot red"></span>Baneada</span>
-          <span><span class="legend-dot amber"></span>Maliciosa</span>
-          <span><span class="legend-dot blue"></span>Observada</span>
-          <span><span class="legend-dot violet"></span>Cluster (+)</span>
-          <span class="muted">* si no hay GeoIP, se muestra ubicación estimada</span>
-        </div>
-        {% if data.map_points %}
-        <div class="map-wrap" style="margin-top:10px">
-          <div id="events-map-leaflet" role="img" aria-label="Mapa OpenStreetMap de eventos"></div>
-        </div>
-        <div id="map-meta" class="map-meta">Renderizando eventos...</div>
-        {% else %}
-        <p class="map-empty muted">No hay coordenadas recientes para mostrar.</p>
-        {% endif %}
-      </article>
-
-      <aside class="card">
-        <h2>Puertos mas intentados</h2>
-        {% if data.top_ports %}
-        <div class="port-grid">
-          {% for item in data.top_ports %}
-          <div class="port"><strong>{{ item.port }}</strong><div class="muted">{{ item.hits }} intentos</div></div>
-          {% endfor %}
-        </div>
-        {% else %}
-        <p class="empty">Sin datos recientes.</p>
-        {% endif %}
-      </aside>
-    </section>
-
-    <section class="grid two" style="margin-top:14px">
-      <article class="card">
-        <div class="section-title">
-          <h2>Whitelist</h2>
-          {% if data.features.write_actions %}<button class="btn" onclick="toggleWlForm()">Agregar</button>{% endif %}
-        </div>
-        {% if data.features.write_actions %}
-        <div id="wl-form" class="wl-form hidden">
-          <input id="wl-input" placeholder="192.168.1.0/24 o 1.2.3.4">
-          <button class="btn" onclick="addWhitelist()">Guardar</button>
-        </div>
-        <p id="wl-error" class="red hidden"></p>
-        {% endif %}
-        <div id="wl-list" class="chip-row">
-          {% for ip in data.whitelist %}
-          <span class="chip" data-entry="{{ ip }}">{{ ip }}
-            {% if data.features.write_actions and ip not in data.protected_whitelist %}
-            <button onclick="removeWhitelist('{{ ip }}')">x</button>
-            {% endif %}
-          </span>
-          {% endfor %}
-        </div>
-      </article>
-
-      <aside class="card">
-        <div class="section-title">
-          <h2>NPM sidecar</h2>
-          <span class="badge {% if data.npm.enabled %}ok{% else %}warn{% endif %}">{{ 'activo' if data.npm.enabled else 'apagado' }}</span>
-        </div>
-        {% if data.npm.enabled and data.npm.proxy_hosts %}
-          <div class="port-grid">
-          {% for host in data.npm.proxy_hosts %}
-            <div class="port {{ 'public' if host.enabled else '' }}">
-              <div><strong>#{{ host.id }}</strong> {% if not host.enabled %}<span class="badge warn">off</span>{% endif %}</div>
-              <div class="muted">{{ host.forward }}</div>
-              <div>{{ host.domains|join(', ') }}</div>
-            </div>
-          {% endfor %}
-          </div>
-        {% elif data.npm.enabled %}
-          <p class="empty">Sin proxy hosts detectados.</p>
-        {% endif %}
-        {% if not data.npm.enabled %}<p class="empty">Integración NPM deshabilitada en ajustes.</p>{% endif %}
-      </aside>
-    </section>
-
-    <section class="grid two" style="margin-top:14px">
-      <article class="card">
-        <div class="section-title">
-          <h2>Últimos baneos fail2ban</h2>
-          <span class="badge danger">{{ data.summary.logged_bans }}</span>
-        </div>
-        <div class="chip-row">
-          {% for item in data.attack_events if item.kind == 'f2b-ban' %}
-            <span class="chip ip-chip" onclick="openIntel('{{ item.source_ip }}')">{{ item.display_ip }} · {{ item.at }}</span>
-          {% else %}
-            <span class="empty">No hay baneos recientes en el log.</span>
-          {% endfor %}
-        </div>
-      </article>
-      <aside class="card">
-        <h2>NAS por VPN</h2>
-        <p class="muted">Mantén NAS solo por VPN. No expongas RPC/NFS (111/2049) en IP pública.</p>
-      </aside>
-    </section>
-  </main>
-
-  <aside id="intel-panel" class="intel-panel hidden" aria-live="polite">
-    <div class="intel-head">
-      <h2 style="margin:0">Intel IP</h2>
-      <button class="btn" onclick="closeIntel()">Cerrar</button>
-    </div>
-    <p id="intel-title" class="muted" style="margin:8px 0 10px">Selecciona una IP para análisis profundo.</p>
-    <div id="intel-body" class="intel-code">Sin datos.</div>
-  </aside>
+  <div id="toast" class="toast hidden"></div>
 
   <script src="/static/vendor/leaflet/leaflet.js"></script>
   <script>
-    const PAGE_SIZE = {{ data.ui.page_size }};
-    const AUTO_REFRESH = {{ data.ui.auto_refresh_seconds }};
-    const MAP_POINTS = {{ data.map_points|tojson }};
-    const ALL_ROWS = Array.from(document.querySelectorAll('#attempts-body tr'));
-    let currentPage = 1;
-    let pageSize = PAGE_SIZE;
-    let visibleRows = ALL_ROWS;
+    let monthLogs = null;
+    let statsData = null;
+    let blockedData = null;
+    let blockedMap = null;
+    let blockedLayer = null;
 
-    function renderPage(page) {
-      currentPage = page;
-      const start = (page - 1) * pageSize;
-      const end = start + pageSize;
-      ALL_ROWS.forEach(row => row.style.display = 'none');
-      visibleRows.slice(start, end).forEach(row => row.style.display = '');
-      renderPagination();
-    }
-    function renderPagination() {
-      const total = visibleRows.length;
-      const pages = Math.max(1, Math.ceil(total / pageSize));
-      const ctrl = document.getElementById('pagination-controls');
-      if (currentPage > pages) currentPage = pages;
-      document.getElementById('page-info').textContent = total ? `Mostrando ${Math.min((currentPage - 1) * pageSize + 1, total)}-${Math.min(currentPage * pageSize, total)} de ${total}` : 'Sin registros';
-      document.getElementById('count-label').textContent = `${total} registros`;
-      ctrl.innerHTML = '';
-      const addBtn = (label, target, disabled = false, active = false) => {
-        const btn = document.createElement('button');
-        btn.className = 'page-btn' + (active ? ' active' : '');
-        btn.textContent = label;
-        btn.disabled = disabled;
-        if (disabled) btn.style.opacity = '0.5';
-        btn.onclick = () => renderPage(target);
-        ctrl.appendChild(btn);
-      };
-      addBtn('«', 1, currentPage === 1);
-      addBtn('‹', Math.max(1, currentPage - 1), currentPage === 1);
-      for (let p = Math.max(1, currentPage - 2); p <= Math.min(pages, currentPage + 2); p++) {
-        const btn = document.createElement('button');
-        btn.className = 'page-btn' + (p === currentPage ? ' active' : '');
-        btn.textContent = p;
-        btn.onclick = () => renderPage(p);
-        ctrl.appendChild(btn);
-      }
-      addBtn('›', Math.min(pages, currentPage + 1), currentPage === pages);
-      addBtn('»', pages, currentPage === pages);
-      const size = document.createElement('select');
-      size.className = 'page-btn';
-      [10, 15, 25, 50].forEach(opt => {
-        const o = document.createElement('option');
-        o.value = String(opt);
-        o.textContent = `${opt}/pag`;
-        if (opt === pageSize) o.selected = true;
-        size.appendChild(o);
-      });
-      size.onchange = () => {
-        pageSize = Number(size.value) || PAGE_SIZE;
-        renderPage(1);
-      };
-      const box = document.createElement('span');
-      box.className = 'pagination-actions';
-      box.appendChild(size);
-      ctrl.appendChild(box);
-    }
-    function filterTable() {
-      const q = document.getElementById('filter-input').value.toLowerCase();
-      const internetOnly = document.getElementById('internet-only')?.checked;
-      visibleRows = ALL_ROWS.filter(row => {
-        const passText = row.dataset.text.toLowerCase().includes(q);
-        if (!passText) return false;
-        if (!internetOnly) return true;
-        return row.dataset.scope === 'internet';
-      });
-      renderPage(1);
-    }
-    async function unban(ip) {
-      if (!confirm(`Desbanear ${ip}?`)) return;
-      const response = await fetch(`/api/unban/${ip}`, {method: 'POST'});
-      const data = await response.json();
-      if (data.ok) location.reload(); else alert(data.error || 'Error');
-    }
+    const titles = {
+      dashboard: ['Dashboard', 'Resumen asíncrono de seguridad y fail2ban.'],
+      jails: ['Fail2ban / Jails', 'Estado de jails, baneos e IPs activas.'],
+      relay: ['Anti open-relay', 'Bloqueo público de SMTP/25 y restricciones Postfix.'],
+      logs: ['Logs del mes', 'Postfix, mail.log, fail2ban y firewall anti-relay.'],
+      blocked: ['IPs bloqueadas + mapa', 'Geo, riesgo, jails y telemetría DSAM opcional.'],
+      ports: ['Puertos', 'Inventario cargado desde el backend de seguridad.'],
+    };
 
-    function closeIntel() {
-      document.getElementById('intel-panel').classList.add('hidden');
-    }
-
-    async function openIntel(ip) {
-      const panel = document.getElementById('intel-panel');
-      const title = document.getElementById('intel-title');
-      const body = document.getElementById('intel-body');
-      panel.classList.remove('hidden');
-      title.textContent = `Consultando ${ip}...`;
-      body.textContent = 'Cargando inteligencia...';
-      try {
-        const response = await fetch(`/api/intel/${ip}`);
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error || 'Error');
-        title.textContent = `IP ${data.ip} · ${data.is_public ? 'publica' : 'privada'}`;
-        body.textContent = JSON.stringify(data, null, 2);
-      } catch (err) {
-        title.textContent = `IP ${ip}`;
-        body.textContent = `Error consultando intel: ${err.message || err}`;
-      }
-    }
-    function toggleWlForm() {
-      document.getElementById('wl-form').classList.toggle('hidden');
-    }
-    async function addWhitelist() {
-      const input = document.getElementById('wl-input');
-      const response = await fetch('/api/whitelist/add', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({entry: input.value.trim()})
-      });
-      const data = await response.json();
-      if (data.ok) location.reload();
-      else {
-        const err = document.getElementById('wl-error');
-        err.textContent = data.error || 'Error';
-        err.classList.remove('hidden');
-      }
-    }
-    async function removeWhitelist(entry) {
-      if (!confirm(`Eliminar ${entry}?`)) return;
-      const response = await fetch('/api/whitelist/remove', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({entry})
-      });
-      const data = await response.json();
-      if (data.ok) location.reload(); else alert(data.error || 'Error');
-    }
-
-    function renderEventsMap() {
-      const meta = document.getElementById('map-meta');
-      if (!Array.isArray(MAP_POINTS) || !MAP_POINTS.length) {
-        if (meta) meta.textContent = 'Sin eventos para mapear';
-        return;
-      }
-      if (typeof L === 'undefined') {
-        if (meta) meta.textContent = 'Leaflet no cargó correctamente';
-        return;
-      }
-      const mapEl = document.getElementById('events-map-leaflet');
-      if (!mapEl) return;
-      const map = L.map(mapEl, { worldCopyJump: true, minZoom: 2, maxZoom: 8 }).setView([20, 0], 2);
-      L.tileLayer('https://{s}.tile.openstreetmap.de/{tiles}/osmde/{z}/{x}/{y}.png', {
-        tiles: 'osmde',
-        maxZoom: 18,
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-      }).addTo(map);
-
-      const buckets = new Map();
-      let internetCount = 0;
-      let estimatedCount = 0;
-      MAP_POINTS.slice(0, 900).forEach(p => {
-        const lat = Number(p.lat), lon = Number(p.lon);
-        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
-        const key = `${lat.toFixed(1)}:${lon.toFixed(1)}`;
-        if (!buckets.has(key)) buckets.set(key, []);
-        buckets.get(key).push(p);
-        if (p.source_scope === 'internet') internetCount += 1;
-        if (p.estimated) estimatedCount += 1;
-      });
-
-      for (const pts of buckets.values()) {
-        const first = pts[0];
-        const lat = pts.reduce((a, p) => a + Number(p.lat), 0) / pts.length;
-        const lon = pts.reduce((a, p) => a + Number(p.lon), 0) / pts.length;
-        const color = pts.some(p => p.banned) ? '#ff5a7a' : (pts.some(p => String(p.kind || '').includes('ssh')) ? '#ffd166' : '#45d5ff');
-        const marker = L.circleMarker([lat, lon], {
-          radius: Math.min(16, 5 + Math.log2(pts.length + 1) * 2),
-          color: pts.length > 1 ? '#c69cff' : '#17324b',
-          weight: pts.length > 1 ? 2 : 1,
-          fillColor: color,
-          fillOpacity: 0.82,
-        }).addTo(map);
-        const txt = `${pts.length} evento(s)<br>${first.country || '--'} ${first.city || ''}${first.estimated ? ' (estimada)' : ''}<br>${pts.slice(0,4).map(x => x.ip).join('<br>')}`;
-        marker.bindPopup(txt);
-        marker.on('click', () => openIntel(first.source_ip || first.ip));
-      }
-      if (meta) meta.textContent = `${MAP_POINTS.length} eventos georreferenciados · ${internetCount} internet · ${estimatedCount} estimados`;
-    }
-
-    // Esperar a que el DOM esté listo y Leaflet cargue
-    function initDashboard() {
-      renderPage(1);
-      filterTable();
-      
-      // Esperar a que Leaflet esté disponible
-      const maxAttempts = 50;
-      let attempts = 0;
-      const checkLeaflet = () => {
-        if (typeof L !== 'undefined') {
-          renderEventsMap();
-          console.log('[Dashboard] Leaflet cargado, mapa renderizado');
-        } else {
-          attempts++;
-          if (attempts < maxAttempts) {
-            setTimeout(checkLeaflet, 100);
-          } else {
-            console.error('[Dashboard] Leaflet no disponible después de 5s');
-            const meta = document.getElementById('map-meta');
-            if (meta) meta.textContent = 'Error: Leaflet no se pudo cargar';
-          }
+    function showView(view) {
+      document.querySelectorAll('.section').forEach(el => el.classList.remove('active'));
+      document.getElementById(`view-${view}`)?.classList.add('active');
+      document.querySelectorAll('.nav button').forEach(btn => btn.classList.toggle('active', btn.dataset.view === view));
+      document.getElementById('page-title').textContent = titles[view]?.[0] || 'Dashboard';
+      document.getElementById('page-subtitle').textContent = titles[view]?.[1] || '';
+      if (view === 'logs' && !monthLogs) loadLogs();
+      if (view === 'blocked') {
+        if (!blockedData) loadBlockedIps();
+        else {
+          setTimeout(() => { renderBlockedMap(); if (blockedMap) blockedMap.invalidateSize(); }, 120);
+          setTimeout(() => { renderBlockedMap(); if (blockedMap) blockedMap.invalidateSize(); }, 650);
         }
-      };
-      checkLeaflet();
-      
-      if (AUTO_REFRESH > 0) window.setTimeout(() => location.reload(), AUTO_REFRESH * 1000);
+      }
+      if ((view === 'jails' || view === 'ports') && !statsData) loadStats();
     }
-    
-    // Ejecutar cuando el DOM esté listo
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', initDashboard);
-    } else {
-      initDashboard();
+
+    function showToast(message, tone = 'ok') {
+      const el = document.getElementById('toast');
+      el.textContent = message;
+      el.className = `toast ${tone === 'danger' ? 'red' : tone === 'warn' ? 'amber' : 'green'}`;
+      window.clearTimeout(showToast._timer);
+      showToast._timer = window.setTimeout(() => el.classList.add('hidden'), 4200);
     }
+    function setBadge(id, ok, text) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.className = `badge ${ok ? 'ok' : 'danger'}`;
+      el.textContent = text;
+    }
+    async function fetchJson(url, options = {}) {
+      const response = await fetch(url, options);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+      return data;
+    }
+
+    async function loadStats() {
+      setBadge('stats-badge', false, 'cargando');
+      try {
+        statsData = await fetchJson('/api/fail2ban-lite');
+        const summary = statsData.summary || {};
+        document.getElementById('m-banned').textContent = summary.total_banned ?? '--';
+        document.getElementById('m-logged').textContent = summary.logged_bans ?? '--';
+        document.getElementById('m-internet').textContent = summary.internet_events ?? '--';
+        setBadge('stats-badge', true, 'actualizado');
+        renderJails(statsData.jails || []);
+        renderRecentAttempts(statsData.attack_events || []);
+        renderPorts(statsData.listening_ports || []);
+      } catch (err) {
+        setBadge('stats-badge', false, 'error');
+        document.getElementById('dashboard-jails').innerHTML = `<p class="red">No se pudo cargar Fail2ban: ${escapeHtml(err.message || err)}</p>`;
+      }
+    }
+
+    function renderJails(jails) {
+      const html = jails.map(jail => `
+        <div class="jail">
+          <div class="row">
+            <strong>${escapeHtml(jail.meta?.title || jail.name || 'jail')}</strong>
+            <span class="badge ${jail.enabled ? 'ok' : 'warn'}">${jail.enabled ? 'activo' : 'no encontrado'}</span>
+          </div>
+          <p class="muted">${escapeHtml(jail.meta?.description || '')}</p>
+          <div class="chips">
+            <span class="chip">fallidos ${jail.currently_failed ?? 0}</span>
+            <span class="chip">baneadas ${jail.currently_banned ?? 0}</span>
+            <span class="chip">histórico ${jail.total_banned ?? 0}</span>
+          </div>
+        </div>
+      `).join('') || '<p class="muted">Sin jails para mostrar.</p>';
+      document.getElementById('dashboard-jails').innerHTML = html;
+      document.getElementById('jails-list').innerHTML = html;
+    }
+
+    function renderRecentAttempts(events) {
+      const visibleLimit = Number(document.getElementById('view-limit')?.value || 100);
+      const filtered = events.filter(item => matchesGlobalItem(item)).slice(0, Math.min(visibleLimit, 80));
+      const rows = filtered.map(item => `
+        <tr>
+          <td class="muted">${escapeHtml(item.at || '')}</td>
+          <td><span class="chip">${escapeHtml(item.display_ip || item.source_ip || '')}</span></td>
+          <td>${escapeHtml(item.kind || '')}</td>
+          <td class="muted">${escapeHtml(item.detail || '')}</td>
+        </tr>
+      `).join('');
+      document.getElementById('recent-attempts').innerHTML = rows || '<tr><td colspan="4" class="muted">Sin actividad reciente.</td></tr>';
+      setBadge('attempts-badge', true, `${filtered.length}/${events.length} visibles`);
+    }
+
+    function renderPorts(ports) {
+      const visibleLimit = Number(document.getElementById('view-limit')?.value || 100);
+      const filtered = ports.filter(item => matchesGlobalItem(item)).slice(0, visibleLimit);
+      document.getElementById('ports-list').innerHTML = filtered.map(item => `
+        <div class="card">
+          <h3>:${escapeHtml(item.port)}/${escapeHtml(item.protocol || '')}</h3>
+          <span class="badge ${item.exposure === 'public' ? 'danger' : item.exposure === 'tailscale' ? 'ok' : 'warn'}">${escapeHtml(item.exposure || '')}</span>
+          <p class="muted">${escapeHtml(item.host || '')}</p>
+          <p>${escapeHtml(String(item.process || '').slice(0, 90))}</p>
+        </div>
+      `).join('') || '<p class="muted">Sin inventario de puertos.</p>';
+      setBadge('ports-badge', true, `${filtered.length}/${ports.length} puertos`);
+    }
+
+    async function loadGuard() {
+      try {
+        const data = await fetchJson('/api/mail-relay/status');
+        setBadge('guard-badge', data.ok, data.ok ? 'protegido' : 'revisar');
+        document.getElementById('guard-state').textContent = data.ok ? 'OK' : 'ALERTA';
+        document.getElementById('guard-state').className = `metric ${data.ok ? 'green' : 'red'}`;
+        document.getElementById('m-relay').textContent = data.ok ? 'OK' : 'ALERTA';
+        document.getElementById('m-relay').className = `metric ${data.ok ? 'green' : 'red'}`;
+        document.getElementById('m-relay-text').textContent = data.public_smtp_25_policy || '';
+        const publicBlocked = !!data.firewall?.checks?.pct_blocks_public_25;
+        const egressLimited = !!data.firewall?.checks?.host_allows_only_mail_pct_25;
+        document.getElementById('public-25').textContent = publicBlocked ? 'Bloqueado' : 'Abierto';
+        document.getElementById('public-25').className = `metric ${publicBlocked ? 'green' : 'red'}`;
+        document.getElementById('egress-25').textContent = egressLimited ? 'Limitada' : 'Riesgo';
+        document.getElementById('egress-25').className = `metric ${egressLimited ? 'green' : 'red'}`;
+        document.getElementById('guard-updated').textContent = `Actualizado ${data.updated}`;
+        document.getElementById('guard-summary').textContent = `${data.public_smtp_25_policy}. ${data.egress_smtp_25_policy}.`;
+        const labels = {
+          host_allows_only_mail_pct_25: 'Host permite salida 25 sólo al PCT mail',
+          host_blocks_before_mail_pct_range_25: 'Host bloquea PCT 10.10.20.0-205 hacia 25',
+          host_blocks_after_mail_pct_range_25: 'Host bloquea PCT 10.10.20.207-255 hacia 25',
+          pct_allows_loopback_25: 'PCT 206 permite loopback a Postfix/25',
+          pct_allows_postal_internal_25: 'PCT 206 permite Postal interno a Postfix/25',
+          pct_blocks_public_25: 'PCT 206 bloquea SMTP público/25',
+        };
+        const checks = data.firewall?.checks || {};
+        document.getElementById('guard-checks').innerHTML = Object.entries(labels).map(([key, label]) => {
+          const ok = !!checks[key];
+          return `<li><span>${label}</span><span class="badge ${ok ? 'ok' : 'danger'}">${ok ? 'OK' : 'Falta'}</span></li>`;
+        }).join('');
+        document.getElementById('postfix-networks').innerHTML = (data.postfix?.mynetworks || []).map(net => `<span class="chip">${escapeHtml(net)}</span>`).join('') || '<span class="muted">Sin datos</span>';
+      } catch (err) {
+        document.getElementById('m-relay').textContent = 'ERROR';
+        document.getElementById('m-relay').className = 'metric red';
+      }
+    }
+
+    async function applyGuard() {
+      showToast('Aplicando reglas anti open-relay...', 'warn');
+      try {
+        const data = await fetchJson('/api/mail-relay/apply', { method: 'POST' });
+        if (!data.ok) throw new Error('La reparación reportó errores');
+        showToast('Bloqueo aplicado y verificado.', 'ok');
+        await loadGuard();
+      } catch (err) {
+        showToast(`Error aplicando bloqueo: ${err.message || err}`, 'danger');
+      }
+    }
+
+    async function loadLogs() {
+      const limit = document.getElementById('log-limit').value || '800';
+      setBadge('logs-badge', false, 'cargando');
+      document.getElementById('logs-meta').textContent = 'Leyendo logs del mes en segundo plano...';
+      try {
+        monthLogs = await fetchJson(`/api/month-logs?limit=${encodeURIComponent(limit)}`);
+        setBadge('logs-badge', true, `${monthLogs.total} líneas`);
+        document.getElementById('logs-meta').textContent = `Desde ${monthLogs.since} · actualizado ${monthLogs.updated}`;
+        renderLogs();
+      } catch (err) {
+        setBadge('logs-badge', false, 'error');
+        document.getElementById('logs-meta').textContent = `No se pudieron cargar logs: ${err.message || err}`;
+      }
+    }
+    function renderLogs() {
+      if (!monthLogs) return;
+      const q = (document.getElementById('log-filter').value || '').toLowerCase();
+      document.getElementById('logs-container').innerHTML = monthLogs.sections.map(section => {
+        const gq = globalFilterText();
+        const items = (section.items || []).filter(item => {
+          const line = String(item.line).toLowerCase();
+          return (!q || line.includes(q)) && (!gq || line.includes(gq));
+        });
+        const visibleLimit = Number(document.getElementById('view-limit')?.value || 100);
+        const lines = items.slice(-visibleLimit).map(item => `<div class="log-line">${escapeHtml(item.line)}</div>`).join('');
+        return `<section class="log-section"><div class="row"><h3>${escapeHtml(section.name)}</h3><span class="badge ${items.length ? 'ok' : 'warn'}">${items.length}</span></div><div class="log-lines">${lines || '<p class="muted">Sin líneas para este filtro.</p>'}</div></section>`;
+      }).join('');
+    }
+    function escapeHtml(value) {
+      return String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#039;');
+    }
+    async function loadBlockedIps() {
+      setBadge('blocked-badge', false, 'cargando');
+      document.getElementById('blocked-meta').textContent = 'Enriqueciendo IPs baneadas y preparando mapa...';
+      try {
+        blockedData = await fetchJson('/api/enriched-blocked-ips?limit=250');
+        setBadge('blocked-badge', true, `${blockedData.items.length} IPs`);
+        const realGeo = (blockedData.items || []).filter(x => !x.estimated).length;
+        const estimatedGeo = (blockedData.items || []).filter(x => x.estimated).length;
+        const dsam = blockedData.dsam?.enabled ? `DSAM activo · ${blockedData.dsam.matched || 0} matches` : 'DSAM opcional no configurado';
+        document.getElementById('blocked-meta').textContent = `${dsam} · geo real ${realGeo} · estimado ${estimatedGeo} · actualizado ${blockedData.updated}`;
+        renderBlockedIps();
+        if (document.getElementById('view-blocked')?.classList.contains('active')) renderBlockedMap();
+      } catch (err) {
+        setBadge('blocked-badge', false, 'error');
+        document.getElementById('blocked-meta').textContent = `No se pudo cargar enriquecimiento: ${err.message || err}`;
+      }
+    }
+
+    function renderBlockedIps() {
+      if (!blockedData) return;
+      const q = (document.getElementById('blocked-filter')?.value || '').toLowerCase();
+      const items = (blockedData.items || []).filter(item => {
+        const text = `${item.ip} ${item.display_ip} ${item.country || ''} ${item.city || ''} ${(item.jails || []).join(' ')} ${item.risk_level || ''} ${item.geo_source || ''}`.toLowerCase();
+        return !q || text.includes(q);
+      }).filter(item => matchesGlobalItem(item));
+      const visibleLimit = Number(document.getElementById('view-limit')?.value || 100);
+      document.getElementById('blocked-list').innerHTML = items.slice(0, visibleLimit).map(item => `
+        <div class="ip-card">
+          <div class="row">
+            <strong><span class="risk-dot ${escapeHtml(item.risk_level || 'medium')}"></span> ${escapeHtml(item.display_ip || item.ip)}</strong>
+            <span class="badge ${item.currently_banned ? 'danger attacker-red' : 'warn'}">${item.currently_banned ? 'atacante / baneada' : 'observada'}</span>
+          </div>
+          <div class="chips">
+            <span class="chip">riesgo ${escapeHtml(item.risk_level || 'medium')} · ${escapeHtml(item.risk_score || 0)}</span>
+            <span class="chip">${escapeHtml(item.country || '--')} ${escapeHtml(item.city || '')}</span>
+            <span class="chip">${item.estimated ? 'geo estimado' : `geo ${escapeHtml(item.geo_source || 'local')}`}</span>
+            ${(item.jails || []).map(j => `<span class="chip">${escapeHtml(j)}</span>`).join('')}
+          </div>
+          <p class="muted">${escapeHtml(item.org || (item.estimated ? 'geo no disponible; coordenada estimada' : ''))}${item.estimated ? ' · coordenada estimada para visualización' : ''}${item.case_id ? ` · caso DSAM #${escapeHtml(item.case_id)}` : ''}</p>
+        </div>
+      `).join('') || '<p class="muted">Sin IPs para este filtro.</p>';
+    }
+
+    function renderBlockedMap() {
+      if (!blockedData || typeof L === 'undefined') return;
+      const mapEl = document.getElementById('blocked-map');
+      if (!mapEl || !mapEl.offsetParent) return;
+      const points = (blockedData.map_points || []).filter(point => matchesGlobalItem(point));
+      renderBlockedMapFallback(points);
+      if (!blockedMap) {
+        blockedMap = L.map('blocked-map', { worldCopyJump: true, minZoom: 2, maxZoom: 9 }).setView([20, 0], 2);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          subdomains: ['a', 'b', 'c'],
+          maxZoom: 18,
+          attribution: '&copy; OpenStreetMap contributors',
+          crossOrigin: true
+        }).addTo(blockedMap);
+      }
+      if (blockedLayer) blockedLayer.remove();
+      blockedLayer = L.layerGroup().addTo(blockedMap);
+      const bounds = [];
+      points.slice(0, 500).forEach(point => {
+        const lat = Number(point.lat), lon = Number(point.lon);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+        bounds.push([lat, lon]);
+        const color = point.risk_level === 'critical' || point.risk_level === 'high' || point.banned ? '#ff2f5f' : point.risk_level === 'medium' ? '#ffd166' : '#45d5ff';
+        const marker = L.circleMarker([lat, lon], { radius: point.banned ? 8 : 6, color: '#0b1421', weight: 1, fillColor: color, fillOpacity: .85 });
+        marker.bindPopup(`<strong>${escapeHtml(point.display_ip || point.ip)}</strong><br>${escapeHtml(point.country || '--')} ${escapeHtml(point.city || '')}<br>Riesgo: ${escapeHtml(point.risk_level || '')} · ${escapeHtml(point.risk_score || 0)}<br>Jails: ${(point.jails || []).map(escapeHtml).join(', ')}<br>Geo: ${escapeHtml(point.geo_source || '')}${point.estimated ? ' (estimada)' : ''}`);
+        marker.addTo(blockedLayer);
+      });
+      if (bounds.length) blockedMap.fitBounds(bounds, { padding: [24, 24], maxZoom: 5 });
+      setTimeout(() => { blockedMap.invalidateSize(); if (bounds.length) blockedMap.fitBounds(bounds, { padding: [24, 24], maxZoom: 5 }); }, 180);
+    }
+
+    function renderBlockedMapFallback(points) {
+      const el = document.getElementById('blocked-map-fallback');
+      if (!el) return;
+      const visibleLimit = Number(document.getElementById('view-limit')?.value || 100);
+      const visible = points.slice(0, Math.min(visibleLimit, 500)).filter(point => Number.isFinite(Number(point.lat)) && Number.isFinite(Number(point.lon)));
+      el.innerHTML = visible.map(point => {
+        const lat = Math.max(-85, Math.min(85, Number(point.lat)));
+        const lon = ((Number(point.lon) + 180) % 360 + 360) % 360 - 180;
+        const x = ((lon + 180) / 360) * 100;
+        const y = ((85 - lat) / 170) * 100;
+        const risk = point.risk_level === 'critical' || point.risk_level === 'high' || point.banned ? 'high' : point.risk_level === 'medium' ? 'medium' : 'low';
+        return `<span class="fallback-dot ${risk}" style="left:${x.toFixed(2)}%;top:${y.toFixed(2)}%" title="${escapeHtml(point.display_ip || point.ip || '')}"></span>`;
+      }).join('');
+    }
+
+    function globalFilterText() {
+      return (document.getElementById('global-filter')?.value || '').toLowerCase();
+    }
+    function allowedRisks() {
+      const value = document.getElementById('risk-filter')?.value || 'all';
+      return value === 'all' ? null : new Set(value.split(','));
+    }
+    function selectedStatus() {
+      return document.getElementById('status-filter')?.value || 'all';
+    }
+    function matchesGlobalItem(item) {
+      const q = globalFilterText();
+      const risks = allowedRisks();
+      const status = selectedStatus();
+      const text = `${item.ip || ''} ${item.display_ip || ''} ${item.country || ''} ${item.city || ''} ${item.org || ''} ${(item.jails || []).join(' ')} ${item.risk_level || ''} ${item.geo_source || ''} ${item.kind || ''} ${item.detail || ''} ${item.port || ''} ${item.process || ''}`.toLowerCase();
+      if (q && !text.includes(q)) return false;
+      if (risks && !risks.has(String(item.risk_level || (item.banned || item.currently_banned ? 'high' : 'medium')))) return false;
+      if (status === 'banned' && !(item.banned || item.currently_banned)) return false;
+      if (status === 'observed' && (item.banned || item.currently_banned)) return false;
+      return true;
+    }
+    function applyAllFilters() {
+      renderBlockedIps();
+      renderBlockedMap();
+      renderLogs();
+      if (statsData) {
+        renderRecentAttempts(statsData.attack_events || []);
+        renderPorts(statsData.listening_ports || []);
+      }
+    }
+
+    function loadAll() {
+      loadGuard();
+      loadStats();
+      loadBlockedIps();
+      loadLogs();
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', loadAll);
+    else loadAll();
   </script>
 </body>
 </html>
