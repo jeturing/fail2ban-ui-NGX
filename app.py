@@ -51,7 +51,13 @@ CONFIG_PATH = os.getenv("FAIL2BAN_UI_CONFIG_PATH", "/etc/fail2ban-ui/config.json
 STATE_PATH = os.getenv("FAIL2BAN_UI_STATE_PATH", "/var/lib/fail2ban-ui/state.json")
 SETUP_TOKEN = os.getenv("FAIL2BAN_UI_SETUP_TOKEN", "")
 PASSWORD_ITERATIONS = 240_000
-DEFAULT_JAILS = ["sshd", "portscan", "sensible-ports", "recidive-48h", "blacklist-permanent"]
+DEFAULT_JAILS = [
+    "sshd",
+    "portscan",
+    "sensible-ports",
+    "recidive-48h",
+    "blacklist-permanent",
+]
 MAIL_RELAY_HOST_SERVICE = "sajet-mail-egress-firewall.service"
 MAIL_RELAY_PCT_SERVICE = "sajet-mail-inbound-firewall.service"
 MAIL_RELAY_ALLOWED_PCT_IP = "10.10.20.206"
@@ -191,8 +197,11 @@ def _default_config() -> dict:
             "enabled": os.getenv("FAIL2BAN_UI_DECISIONS_ENABLED", "1") == "1",
             "mode": os.getenv("FAIL2BAN_UI_DECISION_MODE", "recommend"),
             "threshold": _env_int("FAIL2BAN_UI_DECISION_THRESHOLD", 5),
-            "action_jail": os.getenv("FAIL2BAN_UI_DECISION_ACTION_JAIL", "blacklist-permanent"),
-            "notify_recommendations": os.getenv("FAIL2BAN_UI_DECISION_NOTIFY", "1") == "1",
+            "action_jail": os.getenv(
+                "FAIL2BAN_UI_DECISION_ACTION_JAIL", "blacklist-permanent"
+            ),
+            "notify_recommendations": os.getenv("FAIL2BAN_UI_DECISION_NOTIFY", "1")
+            == "1",
         },
         "enrichment": {
             # ipinfo.io — token gratis: https://ipinfo.io/signup (50k req/mes)
@@ -208,7 +217,9 @@ def _default_config() -> dict:
             # Si True, al banear en fail2ban también bloquea en NPM access list
             "sync_bans": os.getenv("FAIL2BAN_UI_NPM_SYNC_BANS", "0") == "1",
             # Nombre de la access list en NPM donde se agregan las IPs baneadas
-            "access_list_name": os.getenv("FAIL2BAN_UI_NPM_ACCESS_LIST", "fail2ban-blocked"),
+            "access_list_name": os.getenv(
+                "FAIL2BAN_UI_NPM_ACCESS_LIST", "fail2ban-blocked"
+            ),
         },
     }
 
@@ -299,7 +310,11 @@ def configured() -> bool:
 
 
 def _remote_is_setup_safe() -> bool:
-    remote = request.headers.get("X-Forwarded-For", request.remote_addr or "").split(",")[0].strip()
+    remote = (
+        request.headers.get("X-Forwarded-For", request.remote_addr or "")
+        .split(",")[0]
+        .strip()
+    )
     try:
         ip = ipaddress.ip_address(remote)
     except ValueError:
@@ -379,13 +394,15 @@ def _auth_response(message: str = "Autenticacion requerida") -> Response:
 def gatekeeper():
     if request.path == "/health":
         return None
-    
+
     # Webhook receptor de notificaciones (sin autenticación)
     if request.path == "/api/fail2ban" and request.method == "POST":
         return None
 
     if not configured():
-        if (request.path.startswith("/setup") or request.path.startswith("/settings")) and _setup_token_ok(request.form.to_dict()):
+        if (
+            request.path.startswith("/setup") or request.path.startswith("/settings")
+        ) and _setup_token_ok(request.form.to_dict()):
             return None
         if request.path.startswith("/api"):
             return jsonify({"error": "setup_required"}), 428
@@ -429,9 +446,13 @@ _sentry_dsn = os.getenv("FAIL2BAN_UI_SENTRY_DSN", "")
 if _sentry_dsn and sentry_sdk and FlaskIntegration:
     sentry_sdk.init(
         dsn=_sentry_dsn,
-        environment=os.getenv("FAIL2BAN_UI_SENTRY_ENVIRONMENT", "production-fail2ban-ui"),
+        environment=os.getenv(
+            "FAIL2BAN_UI_SENTRY_ENVIRONMENT", "production-fail2ban-ui"
+        ),
         server_name=os.getenv("FAIL2BAN_UI_SENTRY_SERVER_NAME", "fail2ban-ui"),
-        traces_sample_rate=float(os.getenv("FAIL2BAN_UI_SENTRY_TRACE_SAMPLE_RATE", "0.0")),
+        traces_sample_rate=float(
+            os.getenv("FAIL2BAN_UI_SENTRY_TRACE_SAMPLE_RATE", "0.0")
+        ),
         integrations=[FlaskIntegration()],
         before_send_transaction=_before_send_transaction,
         auto_session_tracking=False,
@@ -480,7 +501,11 @@ def geoip(ip: str) -> dict:
         return _geo_cache[ip]
     try:
         token = enrichment_config().get("ipinfo_token", "")
-        url = f"https://ipinfo.io/{ip}/json?token={token}" if token else f"https://ipinfo.io/{ip}/json"
+        url = (
+            f"https://ipinfo.io/{ip}/json?token={token}"
+            if token
+            else f"https://ipinfo.io/{ip}/json"
+        )
         data = _fetch_json(url)
         if data.get("status") == 429 or data.get("error"):
             raise RuntimeError("ipinfo_unavailable")
@@ -541,10 +566,29 @@ def shodan_idb_on_demand(ip: str) -> dict:
     """Consulta Shodan InternetDB aun con enrichment apagado, para drill-down manual."""
     try:
         parsed = ipaddress.ip_address(ip)
-        if parsed.is_private or parsed.is_loopback or parsed.is_reserved or parsed.is_multicast:
-            return {"ports": [], "hostnames": [], "tags": [], "vulns": [], "cpes": [], "note": "ip_no_publica"}
+        if (
+            parsed.is_private
+            or parsed.is_loopback
+            or parsed.is_reserved
+            or parsed.is_multicast
+        ):
+            return {
+                "ports": [],
+                "hostnames": [],
+                "tags": [],
+                "vulns": [],
+                "cpes": [],
+                "note": "ip_no_publica",
+            }
     except ValueError:
-        return {"ports": [], "hostnames": [], "tags": [], "vulns": [], "cpes": [], "note": "ip_invalida"}
+        return {
+            "ports": [],
+            "hostnames": [],
+            "tags": [],
+            "vulns": [],
+            "cpes": [],
+            "note": "ip_invalida",
+        }
     if ip in _shodan_cache:
         return _shodan_cache[ip]
     try:
@@ -558,12 +602,20 @@ def shodan_idb_on_demand(ip: str) -> dict:
             "source": "shodan_internetdb",
         }
     except Exception:
-        result = {"ports": [], "hostnames": [], "tags": [], "vulns": [], "cpes": [], "source": "shodan_internetdb"}
+        result = {
+            "ports": [],
+            "hostnames": [],
+            "tags": [],
+            "vulns": [],
+            "cpes": [],
+            "source": "shodan_internetdb",
+        }
     _shodan_cache[ip] = result
     return result
 
 
 # ─── NPM Sidecar integration ─────────────────────────────────────────────────
+
 
 def _npm_headers() -> dict:
     key = npm_sidecar_config().get("api_key", "")
@@ -587,13 +639,23 @@ def npm_push_ban(ip: str) -> bool:
         )
         with urllib.request.urlopen(req, timeout=5) as resp:
             lists = json.loads(resp.read())
-        target = next((lst for lst in lists if lst.get("name") == npm["access_list_name"]), None)
+        target = next(
+            (lst for lst in lists if lst.get("name") == npm["access_list_name"]), None
+        )
         if not target:
             # Crear la access list
-            body = json.dumps({"name": npm["access_list_name"], "satisfy_any": True, "pass_auth": False}).encode()
+            body = json.dumps(
+                {
+                    "name": npm["access_list_name"],
+                    "satisfy_any": True,
+                    "pass_auth": False,
+                }
+            ).encode()
             create_req = urllib.request.Request(
                 f"{base}/npm/access-lists",
-                data=body, headers=_npm_headers(), method="POST",
+                data=body,
+                headers=_npm_headers(),
+                method="POST",
             )
             with urllib.request.urlopen(create_req, timeout=5) as resp:
                 target = json.loads(resp.read())
@@ -604,15 +666,19 @@ def npm_push_ban(ip: str) -> bool:
         clients = target.get("clients") or []
         if not any(c.get("address") == ip for c in clients):
             clients.append({"address": ip, "directive": "deny"})
-            update_body = json.dumps({
-                "name": npm["access_list_name"],
-                "satisfy_any": True,
-                "pass_auth": False,
-                "clients": clients,
-            }).encode()
+            update_body = json.dumps(
+                {
+                    "name": npm["access_list_name"],
+                    "satisfy_any": True,
+                    "pass_auth": False,
+                    "clients": clients,
+                }
+            ).encode()
             update_req = urllib.request.Request(
                 f"{base}/npm/access-lists/{list_id}",
-                data=update_body, headers=_npm_headers(), method="PUT",
+                data=update_body,
+                headers=_npm_headers(),
+                method="PUT",
             )
             with urllib.request.urlopen(update_req, timeout=5):
                 pass
@@ -634,20 +700,26 @@ def npm_push_unban(ip: str) -> bool:
         )
         with urllib.request.urlopen(req, timeout=5) as resp:
             lists = json.loads(resp.read())
-        target = next((lst for lst in lists if lst.get("name") == npm["access_list_name"]), None)
+        target = next(
+            (lst for lst in lists if lst.get("name") == npm["access_list_name"]), None
+        )
         if not target:
             return False
         list_id = target.get("id")
         clients = [c for c in (target.get("clients") or []) if c.get("address") != ip]
-        update_body = json.dumps({
-            "name": npm["access_list_name"],
-            "satisfy_any": True,
-            "pass_auth": False,
-            "clients": clients,
-        }).encode()
+        update_body = json.dumps(
+            {
+                "name": npm["access_list_name"],
+                "satisfy_any": True,
+                "pass_auth": False,
+                "clients": clients,
+            }
+        ).encode()
         update_req = urllib.request.Request(
             f"{base}/npm/access-lists/{list_id}",
-            data=update_body, headers=_npm_headers(), method="PUT",
+            data=update_body,
+            headers=_npm_headers(),
+            method="PUT",
         )
         with urllib.request.urlopen(update_req, timeout=5):
             pass
@@ -673,7 +745,7 @@ def npm_get_proxy_hosts() -> list[dict]:
             {
                 "id": h.get("id"),
                 "domains": h.get("domain_names", []),
-                "forward": f"{h.get('forward_scheme','http')}://{h.get('forward_host')}:{h.get('forward_port')}",
+                "forward": f"{h.get('forward_scheme', 'http')}://{h.get('forward_host')}:{h.get('forward_port')}",
                 "enabled": h.get("enabled", True),
                 "ssl": bool(h.get("certificate_id")),
             }
@@ -684,6 +756,7 @@ def npm_get_proxy_hosts() -> list[dict]:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def f2b(cmd: list[str]) -> str:
     try:
@@ -701,7 +774,9 @@ def f2b(cmd: list[str]) -> str:
 
 def run_cmd(command: list[str]) -> str:
     try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=8, check=False)
+        result = subprocess.run(
+            command, capture_output=True, text=True, timeout=8, check=False
+        )
         return result.stdout.strip() or result.stderr.strip()
     except Exception as exc:
         return f"ERROR: {exc}"
@@ -709,7 +784,9 @@ def run_cmd(command: list[str]) -> str:
 
 def run_cmd_result(command: list[str], timeout: int = 8) -> dict:
     try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=timeout, check=False)
+        result = subprocess.run(
+            command, capture_output=True, text=True, timeout=timeout, check=False
+        )
         return {
             "ok": result.returncode == 0,
             "returncode": result.returncode,
@@ -718,7 +795,13 @@ def run_cmd_result(command: list[str], timeout: int = 8) -> dict:
             "command": " ".join(command),
         }
     except Exception as exc:
-        return {"ok": False, "returncode": -1, "stdout": "", "stderr": str(exc), "command": " ".join(command)}
+        return {
+            "ok": False,
+            "returncode": -1,
+            "stdout": "",
+            "stderr": str(exc),
+            "command": " ".join(command),
+        }
 
 
 def _line_has_all(line: str, tokens: list[str]) -> bool:
@@ -728,8 +811,8 @@ def _line_has_all(line: str, tokens: list[str]) -> bool:
 def _mail_relay_firewall_status() -> dict:
     host_rules = run_cmd_result(["iptables", "-S", "FORWARD"])
     pct_rules = run_cmd_result(["pct", "exec", "206", "--", "iptables", "-S", "INPUT"])
-    host_text = f"{host_rules.get('stdout','')}\n{host_rules.get('stderr','')}"
-    pct_text = f"{pct_rules.get('stdout','')}\n{pct_rules.get('stderr','')}"
+    host_text = f"{host_rules.get('stdout', '')}\n{host_rules.get('stderr', '')}"
+    pct_text = f"{pct_rules.get('stdout', '')}\n{pct_rules.get('stderr', '')}"
 
     checks = {
         "host_allows_only_mail_pct_25": _line_has_all(
@@ -782,7 +865,15 @@ def _mail_relay_postfix_status() -> dict:
             relay_line = line
         elif line.startswith("smtpd_recipient_restrictions ="):
             recipient_line = line
-    nets = {item.strip() for item in mynetworks_line.split("=", 1)[-1].split(",") if item.strip()} if mynetworks_line else set()
+    nets = (
+        {
+            item.strip()
+            for item in mynetworks_line.split("=", 1)[-1].split(",")
+            if item.strip()
+        }
+        if mynetworks_line
+        else set()
+    )
     return {
         "ok": (
             bool(mynetworks_line)
@@ -815,26 +906,50 @@ def apply_mail_relay_guard() -> dict:
         ["systemctl", "enable", "--now", MAIL_RELAY_HOST_SERVICE],
         ["systemctl", "enable", "--now", MAIL_RELAY_PCT_SERVICE],
         [
-            "pct", "exec", "206", "--", "postconf", "-e",
+            "pct",
+            "exec",
+            "206",
+            "--",
+            "postconf",
+            "-e",
             "mynetworks = 127.0.0.0/8, 172.18.0.7/32, 172.18.0.4/32, 172.18.0.3/32",
         ],
         [
-            "pct", "exec", "206", "--", "postconf", "-e",
+            "pct",
+            "exec",
+            "206",
+            "--",
+            "postconf",
+            "-e",
             "smtpd_relay_restrictions = permit_mynetworks, permit_sasl_authenticated, reject_unauth_destination",
         ],
         [
-            "pct", "exec", "206", "--", "postconf", "-e",
+            "pct",
+            "exec",
+            "206",
+            "--",
+            "postconf",
+            "-e",
             "smtpd_recipient_restrictions = permit_mynetworks, permit_sasl_authenticated, reject_unauth_destination, reject_invalid_hostname, reject_non_fqdn_hostname",
         ],
         [
-            "pct", "exec", "206", "--", "postconf", "-e",
+            "pct",
+            "exec",
+            "206",
+            "--",
+            "postconf",
+            "-e",
             "smtpd_sender_restrictions = permit_mynetworks, permit_sasl_authenticated, reject_unknown_sender_domain",
         ],
         ["pct", "exec", "206", "--", "postfix", "check"],
         ["pct", "exec", "206", "--", "systemctl", "reload", "postfix"],
     ]
     results = [run_cmd_result(command, timeout=20) for command in commands]
-    return {"ok": all(item.get("ok") for item in results), "results": results, "status": get_mail_relay_guard_status()}
+    return {
+        "ok": all(item.get("ok") for item in results),
+        "results": results,
+        "status": get_mail_relay_guard_status(),
+    }
 
 
 def _mask_ip(ip: str) -> str:
@@ -856,7 +971,12 @@ def _ip_is_safe_for_action(ip: str) -> bool:
         parsed = ipaddress.ip_address(ip)
     except ValueError:
         return False
-    if parsed.is_loopback or parsed.is_private or parsed.is_reserved or parsed.is_multicast:
+    if (
+        parsed.is_loopback
+        or parsed.is_private
+        or parsed.is_reserved
+        or parsed.is_multicast
+    ):
         return False
     for protected in cfg("protected_whitelist", []):
         try:
@@ -891,7 +1011,9 @@ def _send_notch(event: dict) -> bool:
     if notch.get("token"):
         headers["Authorization"] = f"Bearer {notch['token']}"
     try:
-        req = urllib.request.Request(notch["webhook_url"], data=body, headers=headers, method="POST")
+        req = urllib.request.Request(
+            notch["webhook_url"], data=body, headers=headers, method="POST"
+        )
         with urllib.request.urlopen(req, timeout=4) as response:
             return 200 <= response.status < 300
     except Exception:
@@ -908,7 +1030,9 @@ def evaluate_decisions(attempts: list[dict], banned_ips: set[str]) -> list[dict]
     threshold = max(1, int(decision_cfg.get("threshold") or 5))
     mode = decision_cfg.get("mode", "recommend")
     action_jail = decision_cfg.get("action_jail") or "blacklist-permanent"
-    counts: Counter[str] = Counter(a["source_ip"] for a in attempts if a.get("malicious"))
+    counts: Counter[str] = Counter(
+        a["source_ip"] for a in attempts if a.get("malicious")
+    )
 
     for source_ip, hits in counts.most_common(20):
         if hits < threshold:
@@ -952,7 +1076,9 @@ def evaluate_decisions(attempts: list[dict], banned_ips: set[str]) -> list[dict]
         decisions.append(decision)
 
         notify_key = f"{severity}:{action}:{source_ip}:{hits}"
-        if decision_cfg.get("notify_recommendations") and notify_key not in state.get("notified", []):
+        if decision_cfg.get("notify_recommendations") and notify_key not in state.get(
+            "notified", []
+        ):
             _send_notch(
                 {
                     "type": "fail2ban-ui.decision",
@@ -978,9 +1104,18 @@ def parse_status(jail: str) -> dict:
     raw = f2b(["status", jail])
     meta = CONFIG.get("jail_meta", {}).get(
         jail,
-        {"title": jail, "description": "Jail configurado en fail2ban.", "policy": "Activa", "tone": "neutral"},
+        {
+            "title": jail,
+            "description": "Jail configurado en fail2ban.",
+            "policy": "Activa",
+            "tone": "neutral",
+        },
     )
-    if raw.startswith("ERROR") or "Sorry but the jail" in raw or "does not exist" in raw:
+    if (
+        raw.startswith("ERROR")
+        or "Sorry but the jail" in raw
+        or "does not exist" in raw
+    ):
         return {
             "jail": jail,
             "meta": meta,
@@ -997,7 +1132,9 @@ def parse_status(jail: str) -> dict:
         return match.group(1).strip() if match else default
 
     banned_line = extract(r"Banned IP list:\s*(.*)", "")
-    banned_ips = [ip.strip() for ip in banned_line.split() if ip.strip()] if banned_line else []
+    banned_ips = (
+        [ip.strip() for ip in banned_line.split() if ip.strip()] if banned_line else []
+    )
     return {
         "jail": jail,
         "meta": meta,
@@ -1061,7 +1198,9 @@ def get_listening_ports() -> list[dict]:
     raw = run_cmd(["ss", "-tulnpH"])
     ports = []
     for line in raw.splitlines():
-        match = re.match(r"^(tcp|udp)\s+\S+\s+\d+\s+\d+\s+(\S+)\s+\S+(?:\s+(.*))?$", line)
+        match = re.match(
+            r"^(tcp|udp)\s+\S+\s+\d+\s+\d+\s+(\S+)\s+\S+(?:\s+(.*))?$", line
+        )
         if not match:
             continue
         protocol = (match.group(1) or "tcp").upper()
@@ -1090,7 +1229,15 @@ def get_listening_ports() -> list[dict]:
                 "risk": risk,
             }
         )
-    return sorted(ports, key=lambda item: (item["exposure"], item["risk"], item["port"], item["protocol"]))
+    return sorted(
+        ports,
+        key=lambda item: (
+            item["exposure"],
+            item["risk"],
+            item["port"],
+            item["protocol"],
+        ),
+    )
 
 
 def get_recent_attempts(limit: int = 60) -> tuple[list[dict], list[dict]]:
@@ -1127,7 +1274,10 @@ def get_recent_attempts(limit: int = 60) -> tuple[list[dict], list[dict]]:
 
     ssh_raw = run_cmd(["journalctl", "_COMM=sshd", "--no-pager", "-n", "160"])
     for line in ssh_raw.splitlines():
-        failed = re.search(r"Failed password for (invalid user )?([^ ]+) from ([0-9a-fA-F:.]+) port (\d+)", line)
+        failed = re.search(
+            r"Failed password for (invalid user )?([^ ]+) from ([0-9a-fA-F:.]+) port (\d+)",
+            line,
+        )
         if failed:
             username = failed.group(2)
             source_ip = failed.group(3)
@@ -1147,7 +1297,10 @@ def get_recent_attempts(limit: int = 60) -> tuple[list[dict], list[dict]]:
                 }
             )
             continue
-        closed = re.search(r"Connection closed by (?:invalid user |authenticating user )?([^ ]+) ([0-9a-fA-F:.]+) port (\d+)", line)
+        closed = re.search(
+            r"Connection closed by (?:invalid user |authenticating user )?([^ ]+) ([0-9a-fA-F:.]+) port (\d+)",
+            line,
+        )
         if closed:
             attempts.append(
                 {
@@ -1164,7 +1317,9 @@ def get_recent_attempts(limit: int = 60) -> tuple[list[dict], list[dict]]:
             )
 
     attempts.sort(key=lambda item: item["at"], reverse=True)
-    top_ports = [{"port": port, "hits": hits} for port, hits in port_counter.most_common(12)]
+    top_ports = [
+        {"port": port, "hits": hits} for port, hits in port_counter.most_common(12)
+    ]
     return attempts[:limit], top_ports
 
 
@@ -1176,7 +1331,9 @@ def auto_blacklist_enforcement(events: list[dict]) -> None:
     """
     try:
         # Cargar historial de blacklists desde state.json
-        state_path = os.getenv("FAIL2BAN_UI_STATE_PATH", "/var/lib/fail2ban-ui/state.json")
+        state_path = os.getenv(
+            "FAIL2BAN_UI_STATE_PATH", "/var/lib/fail2ban-ui/state.json"
+        )
         state = {}
         if os.path.exists(state_path):
             try:
@@ -1184,14 +1341,22 @@ def auto_blacklist_enforcement(events: list[dict]) -> None:
                     state = json.load(f)
             except Exception:
                 state = {}
-        
-        blacklist_24h_state = state.get("blacklist_24h_state", {})  # {ip: {count, first_seen}}
+
+        blacklist_24h_state = state.get(
+            "blacklist_24h_state", {}
+        )  # {ip: {count, first_seen}}
         already_permanent = state.get("blacklist_permanent_ips", set())
-        
+
         # Contar eventos por IP (solo internet scope)
-        internet_events = [e for e in events if e.get("source_scope") == "internet" and e.get("malicious")]
-        ip_counts = Counter(e.get("source_ip") for e in internet_events if e.get("source_ip"))
-        
+        internet_events = [
+            e
+            for e in events
+            if e.get("source_scope") == "internet" and e.get("malicious")
+        ]
+        ip_counts = Counter(
+            e.get("source_ip") for e in internet_events if e.get("source_ip")
+        )
+
         # Regla 1: 120+ eventos → blacklist 24h
         for ip, count in ip_counts.items():
             if count >= 120 and ip not in already_permanent:
@@ -1199,30 +1364,35 @@ def auto_blacklist_enforcement(events: list[dict]) -> None:
                     print(f"[AUTO-BLACKLIST] {ip}: {count} eventos, aplicando ban 24h")
                     for jail in cfg("jails", DEFAULT_JAILS):
                         f2b(["set", jail, "banip", ip])
-                    blacklist_24h_state[ip] = {"count": count, "first_seen": datetime.now().isoformat()}
+                    blacklist_24h_state[ip] = {
+                        "count": count,
+                        "first_seen": datetime.now().isoformat(),
+                    }
                     npm_push_ban(ip)
-        
+
         # Regla 2: Si está en 24h y vuelve a atacar 3+ veces → permanente
         for ip in list(blacklist_24h_state.keys()):
             if ip not in already_permanent and ip in ip_counts:
                 current_count = ip_counts[ip]
                 prev_count = blacklist_24h_state[ip].get("count", 0)
                 new_attacks = current_count - prev_count
-                
+
                 if new_attacks >= 3:
-                    print(f"[AUTO-BLACKLIST] {ip}: ya estaba baneada, +{new_attacks} intentos nuevos, moviendo a PERMANENTE")
+                    print(
+                        f"[AUTO-BLACKLIST] {ip}: ya estaba baneada, +{new_attacks} intentos nuevos, moviendo a PERMANENTE"
+                    )
                     f2b(["set", "blacklist-permanent", "banip", ip])
                     already_permanent.add(ip)
                     del blacklist_24h_state[ip]
                     npm_push_ban(ip)
                 else:
                     blacklist_24h_state[ip]["count"] = current_count
-        
+
         # Guardar estado actualizado
         state["blacklist_24h_state"] = blacklist_24h_state
         state["blacklist_permanent_ips"] = list(already_permanent)
         state["auto_blacklist_last_run"] = datetime.now().isoformat()
-        
+
         os.makedirs(os.path.dirname(state_path), exist_ok=True, mode=0o700)
         tmp_path = f"{state_path}.tmp"
         with open(tmp_path, "w", encoding="utf-8") as f:
@@ -1316,7 +1486,9 @@ def _compute_security_posture(
     if public_total > 0:
         score -= min(20, public_total * 2)
         findings.append(f"{public_total} puertos expuestos en WAN")
-        recommendations.append("Reducir puertos expuestos y mantener servicios de gestión solo por VPN/loopback")
+        recommendations.append(
+            "Reducir puertos expuestos y mantener servicios de gestión solo por VPN/loopback"
+        )
 
     if high_risk:
         score -= min(30, len(high_risk) * 6)
@@ -1325,7 +1497,9 @@ def _compute_security_posture(
         recommendations.append("Filtrar puertos de riesgo alto en firewall de host")
         if any((p.get("port") in {111, 2049}) for p in high_risk):
             findings.append("Servicios RPC/NFS expuestos en WAN (riesgo para NAS)")
-            recommendations.append("Mover NAS a red VPN privada y bloquear 111/2049 en IP pública")
+            recommendations.append(
+                "Mover NAS a red VPN privada y bloquear 111/2049 en IP pública"
+            )
 
     if total_failed > 0:
         score -= min(20, total_failed)
@@ -1333,7 +1507,9 @@ def _compute_security_posture(
 
     if not feature_flags.get("write_actions"):
         score -= 8
-        findings.append("Panel en modo solo lectura (sin acciones correctivas desde UI)")
+        findings.append(
+            "Panel en modo solo lectura (sin acciones correctivas desde UI)"
+        )
 
     if not feature_flags.get("api_enabled"):
         score -= 3
@@ -1345,13 +1521,17 @@ def _compute_security_posture(
         recommendations.append("Agregar 216.106.182.26/32 a protected_whitelist")
 
     has_ssh_public = any(
-        p.get("port") == 22 and p.get("exposure") == "public" and p.get("protocol") == "TCP"
+        p.get("port") == 22
+        and p.get("exposure") == "public"
+        and p.get("protocol") == "TCP"
         for p in listening_ports
     )
     if has_ssh_public:
         score -= 8
         findings.append("SSH público detectado en WAN")
-        recommendations.append("Restringir SSH por allowlist o mover acceso administrativo a VPN")
+        recommendations.append(
+            "Restringir SSH por allowlist o mover acceso administrativo a VPN"
+        )
 
     score = max(0, min(100, score))
     if score >= 85:
@@ -1365,7 +1545,9 @@ def _compute_security_posture(
         tone = "danger"
 
     if not recommendations:
-        recommendations.append("Mantener revisión periódica de puertos y eventos en jails")
+        recommendations.append(
+            "Mantener revisión periódica de puertos y eventos en jails"
+        )
 
     return {
         "score": score,
@@ -1396,23 +1578,48 @@ def get_all_stats() -> dict:
     ]
     recent_attempts, top_ports = get_recent_attempts()
     fail2ban_events = get_fail2ban_events()
-    attack_events = sorted((recent_attempts + fail2ban_events), key=_event_sort_key, reverse=True)[:220]
-    
+    attack_events = sorted(
+        (recent_attempts + fail2ban_events), key=_event_sort_key, reverse=True
+    )[:220]
+
     # Ejecutar auto-blacklist enforcement
     auto_blacklist_enforcement(attack_events)
     listening_ports = get_listening_ports()
     decisions = evaluate_decisions(attack_events, set(all_ips))
 
-    unique_ips = list({attempt["source_ip"] for attempt in attack_events if attempt["malicious"]})
-    geo_map = {ip: geoip(ip) for ip in unique_ips[:40]} if feature_enabled("external_enrichment") else {}
-    shodan_map = {ip: shodan_idb(ip) for ip in unique_ips[:40]} if feature_enabled("external_enrichment") else {}
+    unique_ips = list(
+        {attempt["source_ip"] for attempt in attack_events if attempt["malicious"]}
+    )
+    geo_map = (
+        {ip: geoip(ip) for ip in unique_ips[:40]}
+        if feature_enabled("external_enrichment")
+        else {}
+    )
+    shodan_map = (
+        {ip: shodan_idb(ip) for ip in unique_ips[:40]}
+        if feature_enabled("external_enrichment")
+        else {}
+    )
     for attempt in attack_events:
-        attempt["geo"] = geo_map.get(attempt["source_ip"], _empty_geo(attempt["source_ip"]))
-        attempt["shodan"] = shodan_map.get(attempt["source_ip"], {"ports": [], "hostnames": [], "tags": [], "vulns": [], "cpes": []})
+        attempt["geo"] = geo_map.get(
+            attempt["source_ip"], _empty_geo(attempt["source_ip"])
+        )
+        attempt["shodan"] = shodan_map.get(
+            attempt["source_ip"],
+            {"ports": [], "hostnames": [], "tags": [], "vulns": [], "cpes": []},
+        )
 
     for jail in jails:
         jail["banned_ips_geo"] = [
-            {"ip": ip, "display_ip": _mask_ip(ip), **(geoip(ip) if feature_enabled("external_enrichment") else _empty_geo(ip))}
+            {
+                "ip": ip,
+                "display_ip": _mask_ip(ip),
+                **(
+                    geoip(ip)
+                    if feature_enabled("external_enrichment")
+                    else _empty_geo(ip)
+                ),
+            }
             for ip in jail["banned_ips"]
         ]
 
@@ -1485,8 +1692,16 @@ def get_all_stats() -> dict:
         "total_banned": total_banned,
         "total_failed": total_failed,
         "unique_ips": len(set(all_ips)),
-        "internet_events": sum(1 for a in attack_events if a.get("source_scope") == "internet" and a.get("malicious")),
-        "internal_events": sum(1 for a in attack_events if a.get("source_scope") in {"interna", "loopback"} and a.get("malicious")),
+        "internet_events": sum(
+            1
+            for a in attack_events
+            if a.get("source_scope") == "internet" and a.get("malicious")
+        ),
+        "internal_events": sum(
+            1
+            for a in attack_events
+            if a.get("source_scope") in {"interna", "loopback"} and a.get("malicious")
+        ),
         "logged_bans": sum(1 for a in attack_events if a.get("kind") == "f2b-ban"),
     }
     security_posture = _compute_security_posture(
@@ -1496,7 +1711,7 @@ def get_all_stats() -> dict:
         features(),
         cfg("protected_whitelist", []),
     )
-    
+
     # Cargar eventos webhook recibidos
     state = _load_state()
     webhook_events = state.get("webhook_events", [])
@@ -1549,7 +1764,9 @@ def _config_from_form(form, existing: dict) -> dict:
         base = existing.get("jail_meta", {}).get(jail, DEFAULT_JAIL_META.get(jail, {}))
         jail_meta[jail] = {
             "title": form.get(f"jail_title_{jail}") or base.get("title") or jail,
-            "description": form.get(f"jail_description_{jail}") or base.get("description") or "",
+            "description": form.get(f"jail_description_{jail}")
+            or base.get("description")
+            or "",
             "policy": form.get(f"jail_policy_{jail}") or base.get("policy") or "Activa",
             "tone": form.get(f"jail_tone_{jail}") or base.get("tone") or "neutral",
         }
@@ -1570,15 +1787,21 @@ def _config_from_form(form, existing: dict) -> dict:
             "jail_meta": jail_meta,
             "protected_whitelist": _split_csv(form.get("protected_whitelist"), []),
             "page_size": max(5, min(100, int(form.get("page_size") or 15))),
-            "auto_refresh_seconds": max(0, min(3600, int(form.get("auto_refresh_seconds") or 30))),
+            "auto_refresh_seconds": max(
+                0, min(3600, int(form.get("auto_refresh_seconds") or 30))
+            ),
             "ui_density": form.get("ui_density", "comfortable"),
             "features": {
-                "journal_inspection": _bool_from_form(form, "feature_journal_inspection"),
+                "journal_inspection": _bool_from_form(
+                    form, "feature_journal_inspection"
+                ),
                 "port_inventory": _bool_from_form(form, "feature_port_inventory"),
                 "write_actions": _bool_from_form(form, "feature_write_actions"),
                 "api_enabled": _bool_from_form(form, "feature_api_enabled"),
                 "swagger_enabled": _bool_from_form(form, "feature_swagger_enabled"),
-                "external_enrichment": _bool_from_form(form, "feature_external_enrichment"),
+                "external_enrichment": _bool_from_form(
+                    form, "feature_external_enrichment"
+                ),
                 "external_links": _bool_from_form(form, "feature_external_links"),
                 "mask_ips": _bool_from_form(form, "feature_mask_ips"),
             },
@@ -1594,22 +1817,28 @@ def _config_from_form(form, existing: dict) -> dict:
                 "enabled": _bool_from_form(form, "decisions_enabled"),
                 "mode": form.get("decision_mode", "recommend"),
                 "threshold": max(1, min(100, int(form.get("decision_threshold") or 5))),
-                "action_jail": form.get("decision_action_jail", "blacklist-permanent").strip(),
-                "notify_recommendations": _bool_from_form(form, "decision_notify_recommendations"),
+                "action_jail": form.get(
+                    "decision_action_jail", "blacklist-permanent"
+                ).strip(),
+                "notify_recommendations": _bool_from_form(
+                    form, "decision_notify_recommendations"
+                ),
             },
             "enrichment": {
                 "ipinfo_token": form.get("enrichment_ipinfo_token", "").strip()
-                    or (existing.get("enrichment") or {}).get("ipinfo_token", ""),
+                or (existing.get("enrichment") or {}).get("ipinfo_token", ""),
                 "shodan_key": form.get("enrichment_shodan_key", "").strip()
-                    or (existing.get("enrichment") or {}).get("shodan_key", ""),
+                or (existing.get("enrichment") or {}).get("shodan_key", ""),
             },
             "npm_sidecar": {
                 "enabled": _bool_from_form(form, "npm_enabled"),
                 "url": form.get("npm_url", "").strip(),
                 "api_key": form.get("npm_api_key", "").strip()
-                    or (existing.get("npm_sidecar") or {}).get("api_key", ""),
+                or (existing.get("npm_sidecar") or {}).get("api_key", ""),
                 "sync_bans": _bool_from_form(form, "npm_sync_bans"),
-                "access_list_name": form.get("npm_access_list_name", "fail2ban-blocked").strip(),
+                "access_list_name": form.get(
+                    "npm_access_list_name", "fail2ban-blocked"
+                ).strip(),
             },
         }
     )
@@ -1701,7 +1930,13 @@ def unban(ip: str):
     for jail in cfg("jails", DEFAULT_JAILS):
         f2b(["set", jail, "unbanip", ip])
     npm_push_unban(ip)
-    return jsonify({"ok": True, "ip": _mask_ip(ip), "npm_sync": npm_sidecar_config().get("sync_bans", False)})
+    return jsonify(
+        {
+            "ok": True,
+            "ip": _mask_ip(ip),
+            "npm_sync": npm_sidecar_config().get("sync_bans", False),
+        }
+    )
 
 
 @app.route("/api/geoip/<ip>")
@@ -1729,13 +1964,15 @@ def api_npm_status():
             health = json.loads(resp.read())
     except Exception as exc:
         health = {"ok": False, "error": str(exc)}
-    return jsonify({
-        "sidecar_url": npm["url"],
-        "sync_bans": npm.get("sync_bans", False),
-        "access_list_name": npm.get("access_list_name", "fail2ban-blocked"),
-        "health": health,
-        "proxy_hosts": npm_get_proxy_hosts(),
-    })
+    return jsonify(
+        {
+            "sidecar_url": npm["url"],
+            "sync_bans": npm.get("sync_bans", False),
+            "access_list_name": npm.get("access_list_name", "fail2ban-blocked"),
+            "health": health,
+            "proxy_hosts": npm_get_proxy_hosts(),
+        }
+    )
 
 
 @app.route("/api/mail-relay/status")
@@ -1755,10 +1992,14 @@ def api_mail_relay_apply():
 
 def _month_start() -> str:
     now = datetime.utcnow()
-    return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
+    return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
 
 
-def _log_lines_from_command(command: list[str], source: str, limit: int = 500, timeout: int = 20) -> list[dict]:
+def _log_lines_from_command(
+    command: list[str], source: str, limit: int = 500, timeout: int = 20
+) -> list[dict]:
     result = run_cmd_result(command, timeout=timeout)
     lines = (result.get("stdout") or result.get("stderr") or "").splitlines()
     return [{"source": source, "line": line} for line in lines[-limit:] if line.strip()]
@@ -1767,49 +2008,87 @@ def _log_lines_from_command(command: list[str], source: str, limit: int = 500, t
 def get_month_logs(limit: int = 800) -> dict:
     since = _month_start()
     sections = []
-    sections.append({
-        "name": "Postfix / Postal PCT 206",
-        "items": _log_lines_from_command(
-            ["pct", "exec", "206", "--", "journalctl", "--since", since, "--no-pager", "-u", "postfix", "-n", str(limit)],
-            "mail-pct206",
-            limit=limit,
-        ),
-    })
-    sections.append({
-        "name": "Mail log PCT 206",
-        "items": _log_lines_from_command(
-            ["pct", "exec", "206", "--", "bash", "-lc", f"grep -h \"$(date +%b)\" /var/log/mail.log /var/log/mail.log.* 2>/dev/null | tail -n {int(limit)}"],
-            "mail-log-pct206",
-            limit=limit,
-        ),
-    })
-    sections.append({
-        "name": "Fail2ban host",
-        "items": _log_lines_from_command(
-            ["journalctl", "--since", since, "--no-pager", "-u", "fail2ban", "-n", str(limit)],
-            "fail2ban-host",
-            limit=limit,
-        ),
-    })
-    sections.append({
-        "name": "Firewall anti open-relay",
-        "items": _log_lines_from_command(
-            [
-                "journalctl",
-                "--since",
-                since,
-                "--no-pager",
-                "-u",
-                MAIL_RELAY_HOST_SERVICE,
-                "-u",
-                MAIL_RELAY_PCT_SERVICE,
-                "-n",
-                str(limit),
-            ],
-            "mail-relay-firewall",
-            limit=limit,
-        ),
-    })
+    sections.append(
+        {
+            "name": "Postfix / Postal PCT 206",
+            "items": _log_lines_from_command(
+                [
+                    "pct",
+                    "exec",
+                    "206",
+                    "--",
+                    "journalctl",
+                    "--since",
+                    since,
+                    "--no-pager",
+                    "-u",
+                    "postfix",
+                    "-n",
+                    str(limit),
+                ],
+                "mail-pct206",
+                limit=limit,
+            ),
+        }
+    )
+    sections.append(
+        {
+            "name": "Mail log PCT 206",
+            "items": _log_lines_from_command(
+                [
+                    "pct",
+                    "exec",
+                    "206",
+                    "--",
+                    "bash",
+                    "-lc",
+                    f'grep -h "$(date +%b)" /var/log/mail.log /var/log/mail.log.* 2>/dev/null | tail -n {int(limit)}',
+                ],
+                "mail-log-pct206",
+                limit=limit,
+            ),
+        }
+    )
+    sections.append(
+        {
+            "name": "Fail2ban host",
+            "items": _log_lines_from_command(
+                [
+                    "journalctl",
+                    "--since",
+                    since,
+                    "--no-pager",
+                    "-u",
+                    "fail2ban",
+                    "-n",
+                    str(limit),
+                ],
+                "fail2ban-host",
+                limit=limit,
+            ),
+        }
+    )
+    sections.append(
+        {
+            "name": "Firewall anti open-relay",
+            "items": _log_lines_from_command(
+                [
+                    "journalctl",
+                    "--since",
+                    since,
+                    "--no-pager",
+                    "-u",
+                    MAIL_RELAY_HOST_SERVICE,
+                    "-u",
+                    MAIL_RELAY_PCT_SERVICE,
+                    "-n",
+                    str(limit),
+                ],
+                "mail-relay-firewall",
+                limit=limit,
+            ),
+        }
+    )
     total = sum(len(section["items"]) for section in sections)
     return {
         "ok": True,
@@ -1833,9 +2112,11 @@ def api_month_logs():
 
 def _parse_jail_status(name: str) -> dict:
     raw = f2b(["status", name])
+
     def number(pattern: str) -> int:
         match = re.search(pattern, raw)
         return int(match.group(1)) if match else 0
+
     banned_line = re.search(r"Banned IP list:\s*(.*)", raw)
     banned_ips = []
     if banned_line:
@@ -1860,8 +2141,14 @@ def get_fail2ban_lite() -> dict:
     summary = {
         "total_banned": sum(jail.get("currently_banned", 0) for jail in jails),
         "logged_bans": sum(jail.get("total_banned", 0) for jail in jails),
-        "internet_events": sum(1 for item in attempts if item.get("source_scope") == "internet"),
-        "internal_events": sum(1 for item in attempts if item.get("source_scope") in {"interna", "loopback"}),
+        "internet_events": sum(
+            1 for item in attempts if item.get("source_scope") == "internet"
+        ),
+        "internal_events": sum(
+            1
+            for item in attempts
+            if item.get("source_scope") in {"interna", "loopback"}
+        ),
     }
     return {
         "ok": True,
@@ -1887,7 +2174,11 @@ def _geo_for_map(ip: str) -> dict:
         lat, lon = _pseudo_geo_from_ip(ip)
         geo = {**geo, "lat": lat, "lon": lon}
         estimated = True
-    source = "ipinfo" if feature_enabled("external_enrichment") and not estimated else "estimado"
+    source = (
+        "ipinfo"
+        if feature_enabled("external_enrichment") and not estimated
+        else "estimado"
+    )
     return {**geo, "estimated": estimated, "source": source}
 
 
@@ -1898,11 +2189,18 @@ def _dsam_enrichment_for_ips(ips: list[str]) -> dict[str, dict]:
     if not base or not ips:
         return {}
     try:
-        payload = json.dumps({"ips": ips[:250], "source": "fail2ban-ui"}).encode("utf-8")
+        payload = json.dumps({"ips": ips[:250], "source": "fail2ban-ui"}).encode(
+            "utf-8"
+        )
         headers = {"Content-Type": "application/json", "User-Agent": "fail2ban-ui/1.0"}
         if token:
             headers["Authorization"] = f"Bearer {token}"
-        req = urllib.request.Request(f"{base}/api/dsam/fail2ban/enrich", data=payload, headers=headers, method="POST")
+        req = urllib.request.Request(
+            f"{base}/api/dsam/fail2ban/enrich",
+            data=payload,
+            headers=headers,
+            method="POST",
+        )
         with urllib.request.urlopen(req, timeout=4) as resp:
             data = json.loads(resp.read())
         items = data.get("data") or data.get("items") or []
@@ -1976,15 +2274,23 @@ def get_enriched_blocked_ips(limit: int = 250) -> dict:
                 "lon": geo.get("lon"),
                 "geo_source": geo.get("source"),
                 "estimated": geo.get("estimated", False),
-                "risk_level": dsam_item.get("risk_level") or ("high" if item.get("currently_banned") else "medium"),
-                "risk_score": dsam_item.get("risk_score") or (90 if item.get("currently_banned") else 55),
+                "risk_level": dsam_item.get("risk_level")
+                or ("high" if item.get("currently_banned") else "medium"),
+                "risk_score": dsam_item.get("risk_score")
+                or (90 if item.get("currently_banned") else 55),
                 "tenant": dsam_item.get("tenant"),
                 "case_id": dsam_item.get("case_id"),
                 "last_event": item_events[0] if item_events else None,
                 "event_count": len(item_events),
             }
         )
-    enriched.sort(key=lambda x: (not x.get("currently_banned"), -(x.get("risk_score") or 0), x.get("ip") or ""))
+    enriched.sort(
+        key=lambda x: (
+            not x.get("currently_banned"),
+            -(x.get("risk_score") or 0),
+            x.get("ip") or "",
+        )
+    )
     map_points = [
         {
             "ip": item["ip"],
@@ -2009,7 +2315,10 @@ def get_enriched_blocked_ips(limit: int = 250) -> dict:
         "map_points": map_points,
         "jails": jails,
         "top_ports": top_ports,
-        "dsam": {"enabled": bool(os.getenv("FAIL2BAN_UI_DSAM_URL", "")), "matched": len(dsam)},
+        "dsam": {
+            "enabled": bool(os.getenv("FAIL2BAN_UI_DSAM_URL", "")),
+            "matched": len(dsam),
+        },
         "updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
 
@@ -2042,12 +2351,36 @@ def api_intel(ip: str):
         parsed = ipaddress.ip_address(ip)
     except ValueError:
         return jsonify({"error": "IP invalida"}), 400
-    public = not (parsed.is_private or parsed.is_loopback or parsed.is_reserved or parsed.is_multicast)
+    public = not (
+        parsed.is_private
+        or parsed.is_loopback
+        or parsed.is_reserved
+        or parsed.is_multicast
+    )
     geo_data = geoip(ip) if feature_enabled("external_enrichment") else _empty_geo(ip)
-    if not feature_enabled("external_enrichment") and (geo_data.get("lat") == 0.0 and geo_data.get("lon") == 0.0):
+    if not feature_enabled("external_enrichment") and (
+        geo_data.get("lat") == 0.0 and geo_data.get("lon") == 0.0
+    ):
         lat, lon = _pseudo_geo_from_ip(ip)
-        geo_data = {**geo_data, "lat": lat, "lon": lon, "org": "geo estimada", "estimated": True}
-    shodan_data = shodan_idb_on_demand(ip) if public else {"ports": [], "hostnames": [], "tags": [], "vulns": [], "cpes": [], "note": "ip_no_publica"}
+        geo_data = {
+            **geo_data,
+            "lat": lat,
+            "lon": lon,
+            "org": "geo estimada",
+            "estimated": True,
+        }
+    shodan_data = (
+        shodan_idb_on_demand(ip)
+        if public
+        else {
+            "ports": [],
+            "hostnames": [],
+            "tags": [],
+            "vulns": [],
+            "cpes": [],
+            "note": "ip_no_publica",
+        }
+    )
     return jsonify(
         {
             "ip": ip,
@@ -2069,17 +2402,17 @@ def webhook_fail2ban():
         payload = request.get_json(force=True)
         if not payload:
             return jsonify({"ok": False, "error": "empty_payload"}), 400
-        
+
         # Validar estructura básica
         event_type = payload.get("type", "")
         if not event_type.startswith("fail2ban-ui"):
             return jsonify({"ok": False, "error": "invalid_event_type"}), 400
-        
+
         # Cargar estado para registrar webhooks recibidos
         state = _load_state()
         if "webhook_events" not in state:
             state["webhook_events"] = []
-        
+
         # Agregar evento recibido con timestamp
         event = {
             "received_at": datetime.now().isoformat(),
@@ -2091,25 +2424,29 @@ def webhook_fail2ban():
             "action_result": payload.get("action_result", "pending"),
         }
         state["webhook_events"].append(event)
-        
+
         # Mantener últimos 100 eventos
         if len(state["webhook_events"]) > 100:
             state["webhook_events"] = state["webhook_events"][-100:]
-        
+
         _save_state(state)
-        
+
         # Log del webhook recibido
-        print(f"[WEBHOOK] Recibido: {event['type']} | {event['severity']} | {event['source_ip']} | {event['action']}")
-        
-        return jsonify({
-            "ok": True,
-            "received": True,
-            "event_type": event_type,
-            "severity": event.get("severity"),
-            "action": event.get("action"),
-            "timestamp": event.get("received_at"),
-        }), 202
-    
+        print(
+            f"[WEBHOOK] Recibido: {event['type']} | {event['severity']} | {event['source_ip']} | {event['action']}"
+        )
+
+        return jsonify(
+            {
+                "ok": True,
+                "received": True,
+                "event_type": event_type,
+                "severity": event.get("severity"),
+                "action": event.get("action"),
+                "timestamp": event.get("received_at"),
+            }
+        ), 202
+
     except Exception as e:
         print(f"[WEBHOOK] Error: {e}")
         return jsonify({"ok": False, "error": str(e)}), 400
@@ -2117,14 +2454,18 @@ def webhook_fail2ban():
 
 def _read_jail_local() -> str:
     try:
-        with open(cfg("jail_local", "/etc/fail2ban/jail.local"), "r", encoding="utf-8") as f:
+        with open(
+            cfg("jail_local", "/etc/fail2ban/jail.local"), "r", encoding="utf-8"
+        ) as f:
             return f.read()
     except FileNotFoundError:
         return ""
 
 
 def _write_jail_local(content: str) -> None:
-    with open(cfg("jail_local", "/etc/fail2ban/jail.local"), "w", encoding="utf-8") as f:
+    with open(
+        cfg("jail_local", "/etc/fail2ban/jail.local"), "w", encoding="utf-8"
+    ) as f:
         f.write(content)
 
 
@@ -2150,7 +2491,9 @@ def _set_ignoreip(content: str, entries: list[str]) -> str:
     return re.sub(r"ignoreip\s*=\s*[\s\S]*?(?=\n\w|\Z)", block + "\n", content, count=1)
 
 
-_IP_CIDR_RE = re.compile(r"^((\d{1,3}\.){3}\d{1,3}(/\d{1,2})?|([0-9a-fA-F:]+)(/\d{1,3})?)$")
+_IP_CIDR_RE = re.compile(
+    r"^((\d{1,3}\.){3}\d{1,3}(/\d{1,2})?|([0-9a-fA-F:]+)(/\d{1,3})?)$"
+)
 
 
 @app.route("/api/whitelist", methods=["GET"])
@@ -2214,21 +2557,53 @@ def openapi_spec() -> dict:
         },
         "security": [{"basicAuth": []}],
         "paths": {
-            "/health": {"get": {"summary": "Health check", "responses": {"200": {"description": "OK"}}}},
-            "/api/stats": {"get": {"summary": "Dashboard stats", "responses": {"200": {"description": "Stats"}}}},
+            "/health": {
+                "get": {
+                    "summary": "Health check",
+                    "responses": {"200": {"description": "OK"}},
+                }
+            },
+            "/api/stats": {
+                "get": {
+                    "summary": "Dashboard stats",
+                    "responses": {"200": {"description": "Stats"}},
+                }
+            },
             "/api/unban/{ip}": {
                 "post": {
                     "summary": "Unban IP from configured jails",
-                    "parameters": [{"name": "ip", "in": "path", "required": True, "schema": {"type": "string"}}],
-                    "responses": {"200": {"description": "Unbanned"}, "403": {"description": "Write actions disabled"}},
+                    "parameters": [
+                        {
+                            "name": "ip",
+                            "in": "path",
+                            "required": True,
+                            "schema": {"type": "string"},
+                        }
+                    ],
+                    "responses": {
+                        "200": {"description": "Unbanned"},
+                        "403": {"description": "Write actions disabled"},
+                    },
                 }
             },
-            "/api/whitelist": {"get": {"summary": "List whitelist", "responses": {"200": {"description": "Whitelist"}}}},
+            "/api/whitelist": {
+                "get": {
+                    "summary": "List whitelist",
+                    "responses": {"200": {"description": "Whitelist"}},
+                }
+            },
             "/api/whitelist/add": {
                 "post": {
                     "summary": "Add whitelist entry",
                     "requestBody": {
-                        "content": {"application/json": {"schema": {"type": "object", "properties": {"entry": {"type": "string"}}}}}
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {"entry": {"type": "string"}},
+                                }
+                            }
+                        }
                     },
                     "responses": {"200": {"description": "Added"}},
                 }
@@ -2237,12 +2612,24 @@ def openapi_spec() -> dict:
                 "post": {
                     "summary": "Remove whitelist entry",
                     "requestBody": {
-                        "content": {"application/json": {"schema": {"type": "object", "properties": {"entry": {"type": "string"}}}}}
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {"entry": {"type": "string"}},
+                                }
+                            }
+                        }
                     },
                     "responses": {"200": {"description": "Removed"}},
                 }
             },
-            "/api/openapi.json": {"get": {"summary": "OpenAPI spec", "responses": {"200": {"description": "OpenAPI"}}}},
+            "/api/openapi.json": {
+                "get": {
+                    "summary": "OpenAPI spec",
+                    "responses": {"200": {"description": "OpenAPI"}},
+                }
+            },
         },
     }
 
@@ -2262,4 +2649,8 @@ def api_docs():
 
 
 if __name__ == "__main__":
-    app.run(host=str(cfg("bind_host", "127.0.0.1")), port=int(cfg("bind_port", 2020)), debug=False)
+    app.run(
+        host=str(cfg("bind_host", "127.0.0.1")),
+        port=int(cfg("bind_port", 2020)),
+        debug=False,
+    )
