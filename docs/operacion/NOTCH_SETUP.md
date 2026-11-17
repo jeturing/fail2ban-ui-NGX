@@ -48,7 +48,7 @@ Reemplaza `https://webhook.site/unique-id` con tu endpoint:
 https://tuservidor.com/api/webhooks/fail2ban
 
 # Con Node.js simple:
-http://10.10.20.202:5000/webhook
+http://10.X.X.*:5000/webhook
 
 # Con Discord:
 https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEBHOOK_TOKEN
@@ -63,7 +63,7 @@ Para enviar alertas a Odoo:
 
 ```bash
 # Ir a Ajustes → Webhook URL
-https://10.10.20.201:8069/api/fail2ban/webhook
+https://10.X.X.*:8069/api/fail2ban/webhook
 
 # Con token bearer si Odoo requiere autenticación:
 Authorization: Bearer <JWT_TOKEN>
