@@ -74,7 +74,6 @@ fail2ban-ui-NGX/
 ├── templates/, static/         # Vistas Jinja2 y activos (mapa vendorizado, sin CDN)
 ├── scripts/                    # install.sh y el tick de decisiones
 ├── SECURITY.md                 # Política de seguridad del panel
-├── deploy-config.env           # Instantánea de configuración de un despliegue concreto (no es plantilla — ver Límites)
 └── docs/                       # Documentación completa — índice en docs/README.md
 ```
 
@@ -152,7 +151,7 @@ Causa: la jail no está entre las monitorizadas en la configuración. Correcció
 
 ## 🗺️ Límites honestos y roadmap
 
-- `deploy-config.env` es una instantánea de la configuración de un despliegue concreto que quedó versionada en la raíz: no es una plantilla ni un ejemplo, y sus valores no deben reutilizarse en otro host.
+- `deploy-config.env` era una instantánea de la configuración de un despliegue concreto versionada en la raíz: fue purgada de todo el historial el 2026-11-17 por contener valores de autenticación, y sus valores deben rotarse y no reutilizarse en otro host.
 - Monolito de un solo fichero a propósito: no hay paquetes ni base de datos que migrar; el estado es el del host.
 
 ## 📝 Changelog
